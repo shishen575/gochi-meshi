@@ -199,8 +199,7 @@ function openForm(){
       if (g.name && !$("f-name").value.trim()) $("f-name").value = g.name;
       if (g.pref) { $("f-pref").value = g.pref; fillCities(); }
       if (g.city) $("f-city").value = g.city;
-      if (fmap) setPin(g.lat, g.lng, 16);
-      else pos = { lat: g.lat, lng: g.lng };
+      if (g.lat != null) { if (fmap) setPin(g.lat, g.lng, 16); else pos = { lat: g.lat, lng: g.lng }; }
       m.textContent = g.city ? "入力しました。内容を確認して投稿してください。" : "場所は入力しました。市区町村は候補から選んでください。";
       if (!g.name) m.textContent += "（店名は手入力してください）";
     } catch (err) { m.className = "msg err"; m.textContent = err.message; }

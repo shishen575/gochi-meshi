@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const crypto = require('crypto');
-const { parseGmapsUrl, pickCity, isAllowedHost } = require('./lib/gmaps');
+const { parseGmapsUrl, parseAddress, pickCity, isAllowedHost } = require('./lib/gmaps');
 const fs = require('fs');
 const path = require('path');
 
@@ -227,7 +227,7 @@ async function resolveGmapsUrl(input) {
     try { u = new URL(url); } catch (e) { return null; }
     if (u.protocol !== 'https:' || !isAllowedHost(u.hostname)) return null;
     const parsed = parseGmapsUrl(url);
-    if (parsed && parsed.lat != null) return { url, parsed };
+    if (parsed && (parsed.lat != null || parsed.address)) return { url, parsed };
     const r = await fetch(url, { redirect: 'manual', headers: { 'User-Agent': 'Mozilla/5.0 (compatible; gochi-meshi)', 'Accept-Language': 'ja' }, signal: AbortSignal.timeout(6000) }).catch(() => null);
     if (!r) return parsed ? { url, parsed } : null;
     const loc = r.headers.get('location');
@@ -239,10 +239,20 @@ async function resolveGmapsUrl(input) {
 app.get('/api/gmaps', need, limit(15, 600e3), async (req, res) => {
   const found = await resolveGmapsUrl(clean(req.query.url, 600));
   if (!found) return res.status(400).json({ error: 'Googleマップのリンクを読み取れませんでした。共有ボタンでコピーしたリンクを貼ってください。' });
-  let { name, lat, lng } = found.parsed;
+  let { name, lat, lng, address } = found.parsed;
+  const out = { name, lat: null, lng: null, pref: '', city: '' };
+  if (address) {
+    // 住所の文字から都道府県・市区町村を決め、位置は住所→店名+地域→地域の順に探す
+    const a = parseAddress(address, PREFS, CITIES);
+    out.pref = a.pref; out.city = a.city;
+    const g = await geocode([address, name && a.pref ? `${name} ${a.pref}${a.city}` : '', a.pref ? `${a.pref}${a.city}` : ''].filter(Boolean));
+    if (g) { out.lat = g.lat; out.lng = g.lng; }
+    if (!out.pref && out.lat == null) return res.status(404).json({ error: 'リンクから場所を特定できませんでした。' });
+    return res.json(out);
+  }
   if (lat == null && name) { const g = await geocode([name]); if (g) { lat = g.lat; lng = g.lng; } }
   if (lat == null) return res.status(404).json({ error: 'リンクから場所を特定できませんでした。' });
-  const out = { name, lat, lng, pref: '', city: '' };
+  out.lat = lat; out.lng = lng;
   const addr = await reverseGeocode(lat, lng);
   if (addr) {
     const pref = addr.province || addr.state || '';

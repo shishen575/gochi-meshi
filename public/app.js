@@ -25,7 +25,22 @@ async function api(path, opts={}) {
 const canPost = () => S.me && S.me.member;
 
 // 政令指定都市（例：札幌市）を選んだら、配下の区（札幌市中央区…）もまとめて対象にする
-const isParentCity = name => /市$/.test(name) && Object.values(S.cities).some(l => l.some(n => n !== name && n.startsWith(name) && /区$/.test(n)));
+const parentSet = () => S._parents || (S._parents = new Set(Object.values(S.cities).flat().filter(n => /市$/.test(n)).filter(n => Object.values(S.cities).some(l => l.some(w => w !== n && w.startsWith(n) && /区$/.test(w))))));
+const isParentCity = name => parentSet().has(name);
+// 市区町村の <option> を作る。政令指定都市は「札幌市」グループにまとめて一覧を短くする
+function cityOptions(list, selected, label){
+  const wardsOf = p => list.filter(n => n !== p && n.startsWith(p) && /区$/.test(n));
+  const skip = new Set(); let html = "";
+  list.forEach(n => {
+    if (skip.has(n)) return;
+    if (isParentCity(n)) {
+      const ws = wardsOf(n); ws.forEach(w => skip.add(w));
+      html += `<optgroup label="${esc(n)}"><option value="${esc(n)}" ${n===selected?"selected":""}>${esc(label?label(n,true):n+"（全区）")}</option>` +
+        ws.map(w => `<option value="${esc(w)}" ${w===selected?"selected":""}>${esc(label?label(w):w)}</option>`).join("") + `</optgroup>`;
+    } else html += `<option value="${esc(n)}" ${n===selected?"selected":""}>${esc(label?label(n):n)}</option>`;
+  });
+  return html;
+}
 const cityMatch = (spotCity, sel) => spotCity === sel || (isParentCity(sel) && spotCity.startsWith(sel));
 
 function visibleSpots(ignoreCity){
@@ -59,7 +74,7 @@ function renderFilters(){
     : [...new Set(posted.map(s => s.city).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"ja"));
   if (S.city && !cities.includes(S.city)) S.city = "";
   $("city").innerHTML = `<option value="">${S.pref ? `${S.pref}のすべての市区町村` : "すべての市区町村"}</option>` +
-    cities.map(c => { const n = cnt(c); return `<option value="${esc(c)}" ${c===S.city?"selected":""}>${esc(c)}${n?`（${n}）`:""}</option>`; }).join("");
+    cityOptions(cities, S.city, (c, all) => { const n = cnt(c); return (all ? c + "（全区）" : c) + (n ? `（${n}）` : ""); });
   $("genres").innerHTML = [""].concat(GENRES).map(g => `<button class="chip" data-genre="${esc(g)}" aria-pressed="${S.genre===g}">${g||"すべて"}</button>`).join("");
 }
 
@@ -137,7 +152,7 @@ function openForm(){
     </div>
     <div class="row">
       <div class="field"><label for="f-pref">都道府県（必須）</label><select class="input" id="f-pref" required>${prefOpts}</select></div>
-      <div class="field"><label for="f-city">市区町村（必須）</label><input class="input" id="f-city" required maxlength="30" list="cityList" placeholder="入力して一覧から選択（例：札幌市中央区）"><datalist id="cityList"></datalist></div>
+      <div class="field"><label for="f-city">市区町村（必須）</label><select class="input" id="f-city" required></select></div>
       <div class="field"><label for="f-price">予算</label><select class="input" id="f-price"><option value="">指定なし</option>${PRICES.map(p=>`<option>${p}</option>`).join("")}</select></div>
     </div>
     <div class="field"><label>場所（任意）：地図をクリックしてピンを置けます。置かない場合は店名と地域から自動で探します。</label>
@@ -146,9 +161,10 @@ function openForm(){
     <div class="field"><label for="f-comment">おすすめポイント（必須）</label><textarea class="input" id="f-comment" required maxlength="400" placeholder="何がうまいか、頼むべき一品、混み具合など"></textarea></div>
     <div class="actions"><button class="btn primary" type="submit">投稿する</button><button class="btn" id="cancel" type="button">やめる</button><span class="msg" id="fmsg"></span></div>
   </form>`;
-  const fillCities = () => { const p = $("f-pref").value;
-    $("cityList").innerHTML = (S.cities[p] || []).map(c=>`<option value="${esc(c)}">`).join(""); };
-  $("f-pref").addEventListener("change", fillCities); fillCities();
+  const fillCities = (keep) => { const p = $("f-pref").value, sel = $("f-city");
+    sel.disabled = !p;
+    sel.innerHTML = `<option value="">${p ? "市区町村を選んでください" : "先に都道府県を選んでください"}</option>` + cityOptions(S.cities[p] || [], keep || "", (c, all) => all ? c + "（全区）" : c); };
+  $("f-pref").addEventListener("change", () => fillCities()); fillCities();
   let fmap = null, fpin = null, pos = null;
   const closeForm = () => { if (fmap) { fmap.remove(); fmap = null; } $("formSlot").innerHTML = ""; };
   const setPin = (lat, lng, zoom) => {

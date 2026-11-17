@@ -1,0 +1,9 @@
+{
+  "name": "gochi-meshi",
+  "version": "1.0.0",
+  "description": "ご当地めし帖 - Discordログイン付きのおすすめ飯共有サイト",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": { "express": "4.21.2" }
+}

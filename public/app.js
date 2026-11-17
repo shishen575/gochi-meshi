@@ -12,7 +12,7 @@ const PRICES = ["〜1,000円","〜2,000円","〜3,000円","3,000円〜"];
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const S = { region:"", pref:"", city:"", genre:"", q:"", sort:"likes", view:"list", cities:{}, spots:[], me:null, guildRestricted:false, loaded:false };
+const S = { region:"", pref:"", city:"", genre:"", q:"", sort:"likes", view:"list", open:new Set(), reviews:{}, cities:{}, spots:[], me:null, guildRestricted:false, loaded:false };
 try { const f = JSON.parse(localStorage.getItem("gochi-filter")||"{}"); S.region=f.region||""; S.pref=f.pref||""; } catch(e){}
 function saveFilter(){ try{ localStorage.setItem("gochi-filter", JSON.stringify({region:S.region,pref:S.pref})); }catch(e){} }
 
@@ -22,7 +22,7 @@ async function api(path, opts={}) {
   if (!r.ok) throw new Error(data.error || "エラーが発生しました");
   return data;
 }
-const canPost = () => S.me && S.me.member;
+const canPost = () => !!(S.me && S.me.loggedIn && S.me.user && S.me.user.member);
 
 // 政令指定都市（例：札幌市）を選んだら、配下の区（札幌市中央区…）もまとめて対象にする
 const parentSet = () => S._parents || (S._parents = new Set(Object.values(S.cities).flat().filter(n => /市$/.test(n)).filter(n => Object.values(S.cities).some(l => l.some(w => w !== n && w.startsWith(n) && /区$/.test(w))))));
@@ -78,6 +78,46 @@ function renderFilters(){
   $("genres").innerHTML = [""].concat(GENRES).map(g => `<button class="chip" data-genre="${esc(g)}" aria-pressed="${S.genre===g}">${g||"すべて"}</button>`).join("");
 }
 
+const stars = n => "★★★★★".slice(0, Math.round(n)) + "☆☆☆☆☆".slice(0, 5 - Math.round(n));
+const gmapUrl = s => "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(`${s.name} ${s.pref}${s.city}`);
+const routeUrl = s => "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(s.lat != null ? `${s.lat},${s.lng}` : `${s.name} ${s.pref}${s.city}`);
+const fmtDate = t => new Date(t).toLocaleDateString("ja-JP");
+
+function reviewPanel(s){
+  const list = S.reviews[s.id];
+  if (!list) return `<p class="msg">読み込み中…</p>`;
+  const mine = list.find(r => r.mine);
+  const admin = !!(S.me && S.me.user && S.me.user.admin);
+  const items = list.length ? list.map(r => `<div class="rv"><div class="rv-h">${r.avatar?`<img src="${esc(r.avatar)}" alt="" width="20" height="20">`:""}<b>${esc(r.name)}</b>
+      <span class="stars">${stars(r.rating)}</span><span class="place">${fmtDate(r.createdAt)}</span>
+      ${(r.mine||admin)?`<button class="btn small" data-rvdel="${esc(s.id)}:${esc(r.id)}" type="button">削除</button>`:""}</div>
+      ${r.text?`<p class="comment">${esc(r.text)}</p>`:""}</div>`).join("") : `<p class="msg">まだ口コミがありません。</p>`;
+  const form = canPost() ? `<form class="rvform" data-spot="${esc(s.id)}">
+      <div class="actions"><label class="msg" for="rt-${esc(s.id)}">${mine?"あなたの口コミを更新":"口コミを書く"}</label>
+        <select class="input" id="rt-${esc(s.id)}" name="rating" style="width:auto">${[5,4,3,2,1].map(n=>`<option value="${n}" ${(mine?mine.rating:5)===n?"selected":""}>${"★".repeat(n)}${"☆".repeat(5-n)}</option>`).join("")}</select></div>
+      <textarea class="input" name="text" maxlength="300" placeholder="食べたもの、よかった点など（任意・300字まで）" aria-label="口コミ本文">${mine?esc(mine.text):""}</textarea>
+      <div class="actions"><button class="btn primary small" type="submit">${mine?"更新する":"投稿する"}</button><span class="msg"></span></div></form>`
+    : `<p class="msg">${S.me && S.me.loggedIn ? "このサーバーのメンバーのみ口コミを書けます。" : "口コミを書くには、Discordでログインしてください。"}</p>`;
+  return items + form;
+}
+async function loadReviews(id){
+  try { S.reviews[id] = await api(`/api/spots/${id}/reviews`); } catch (e) { S.reviews[id] = []; }
+  renderFeed();
+}
+
+// Googleマイマップ用の書き出しリンク（今の絞り込みを反映）
+function renderExport(){
+  const q = new URLSearchParams();
+  if (S.pref) q.set("pref", S.pref);
+  if (S.city) q.set("city", S.city);
+  if (S.genre) q.set("genre", S.genre);
+  const qs = q.toString() ? "?" + q : "";
+  const n = visibleSpots().filter(s => s.lat != null).length;
+  $("exportBody").innerHTML = `<p class="msg">今の絞り込み（位置のある${n}件）を、Googleマイマップに取り込める形式で書き出します。ジャンルごとにレイヤーが分かれます。</p>
+    <div class="links"><a class="btn small primary" href="/export.kml${qs}">KMLをダウンロード（おすすめ）</a><a class="btn small" href="/export.csv${qs}">CSVをダウンロード</a></div>
+    <ol class="msg"><li><a href="https://www.google.com/mymaps" target="_blank" rel="noopener noreferrer">Googleマイマップ</a>を開き、「新しい地図を作成」</li><li>「インポート」でダウンロードしたファイルを選ぶ</li><li>共有設定を「リンクを知っている全員」にすれば、みんなに見せられます</li></ol>`;
+}
+
 function renderFeed(){
   const rows = visibleSpots();
   rows.sort(S.sort === "new" ? (a,b)=>b.createdAt-a.createdAt : (a,b)=>b.likes-a.likes || b.createdAt-a.createdAt);
@@ -90,14 +130,19 @@ function renderFeed(){
   const uid = S.me && S.me.loggedIn ? S.me.user.id : null;
   const admin = !!(S.me && S.me.user && S.me.user.admin);
   $("feed").innerHTML = rows.map(s => {
-    const map = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(`${s.name} ${s.pref}${s.city}`);
+    const map = gmapUrl(s), route = routeUrl(s), isOpen = S.open.has(s.id);
     return `<article class="card">
       <div class="card-top"><div><h3>${esc(s.name)}</h3><div class="place">${esc(s.pref)} ${esc(s.city)}</div></div>
         <button class="btn small like" data-like="${esc(s.id)}" aria-pressed="${s.liked}" ${canPost()?"":"disabled"} aria-label="いいね">♥ <span class="c">${s.likes}</span></button></div>
       <div class="tags"><span class="tag">${esc(s.genre)}</span>${s.price?`<span class="tag price">${esc(s.price)}</span>`:""}</div>
       <p class="comment">${esc(s.comment)}</p>
+      ${s.ratingCount?`<div class="rate" title="口コミ平均">${stars(s.ratingAvg)} <b>${s.ratingAvg.toFixed(1)}</b> <span class="place">（口コミ${s.ratingCount}件）</span></div>`:""}
+      <div class="links"><a class="btn small" href="${map}" target="_blank" rel="noopener noreferrer">Googleマップで開く</a>
+        <a class="btn small" href="${route}" target="_blank" rel="noopener noreferrer">ルート案内</a>
+        <button class="btn small" data-rv="${esc(s.id)}" aria-expanded="${isOpen}" type="button">口コミ${s.ratingCount?`（${s.ratingCount}）`:""}を${isOpen?"閉じる":"見る・書く"}</button></div>
+      ${isOpen?`<div class="reviews">${reviewPanel(s)}</div>`:""}
       <div class="card-foot"><span>紹介：${esc(s.authorName)}</span>
-        <span class="acts"><a href="${map}" target="_blank" rel="noopener noreferrer">地図で見る</a>
+        <span class="acts">
         ${(uid && s.authorId===uid)||admin?`<button class="btn small" data-del="${esc(s.id)}" type="button">削除</button>`:""}</span></div>
     </article>`;
   }).join("");
@@ -117,8 +162,8 @@ function renderMap(){
   const rows = visibleSpots(), pts = [];
   rows.forEach(s => {
     if (s.lat == null) return;
-    const g = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(`${s.name} ${s.pref}${s.city}`);
-    const html = `<h3>${esc(s.name)}</h3><p class="pp">${esc(s.pref)} ${esc(s.city)} ・ ${esc(s.genre)}${s.price?" ・ "+esc(s.price):""}</p><p>${esc(s.comment.length>120?s.comment.slice(0,120)+"…":s.comment)}</p><p>♥ ${s.likes} ・ <a href="${g}" target="_blank" rel="noopener noreferrer">Googleマップで開く</a></p>`;
+    const g = gmapUrl(s);
+    const html = `<h3>${esc(s.name)}</h3><p class="pp">${esc(s.pref)} ${esc(s.city)} ・ ${esc(s.genre)}${s.price?" ・ "+esc(s.price):""}</p><p>${esc(s.comment.length>120?s.comment.slice(0,120)+"…":s.comment)}</p><p>${s.ratingCount?`<b>${stars(s.ratingAvg)} ${s.ratingAvg.toFixed(1)}</b>（${s.ratingCount}件） ・ `:""}♥ ${s.likes}</p><p><a href="${g}" target="_blank" rel="noopener noreferrer">Googleマップで開く</a> ・ <a href="${routeUrl(s)}" target="_blank" rel="noopener noreferrer">ルート案内</a></p>`;
     L.marker([s.lat, s.lng], { icon: pinIcon() }).bindPopup(html, { maxWidth:260 }).addTo(layer);
     pts.push([s.lat, s.lng]);
   });
@@ -136,7 +181,7 @@ function applyView(){
   document.querySelectorAll("[data-view]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === S.view)));
   renderMap();
 }
-function render(){ renderUser(); renderFilters(); renderFeed(); renderMap(); }
+function render(){ renderUser(); renderFilters(); renderFeed(); renderMap(); renderExport(); }
 
 function openForm(){
   const prefOpts = `<option value="">選んでください</option>` + Object.entries(REGIONS).map(([r,ps]) =>
@@ -226,6 +271,16 @@ function openForm(){
 
 document.addEventListener("click", async e => {
   const t = e.target.closest("button"); if (!t) return;
+  if (t.dataset.rv) {
+    const id = t.dataset.rv;
+    if (S.open.has(id)) { S.open.delete(id); return renderFeed(); }
+    S.open.add(id); renderFeed(); return loadReviews(id);
+  }
+  if (t.dataset.rvdel) {
+    const [sid, rid] = t.dataset.rvdel.split(":");
+    try { await api(`/api/spots/${sid}/reviews/${rid}`, { method:"DELETE" }); await Promise.all([loadReviews(sid), refreshSpots()]); } catch (err) { $("status").textContent = err.message; }
+    return;
+  }
   if (t.dataset.view) { S.view = t.dataset.view; return applyView(); }
   if (t.id === "openForm") return openForm();
   if (t.id === "logout") { await api("/auth/logout", { method:"POST", body:"{}" }); S.me = { loggedIn:false }; return render(); }
@@ -248,6 +303,16 @@ document.addEventListener("click", async e => {
     try { await api(`/api/spots/${t.dataset.del}`, { method:"DELETE" }); S.spots = S.spots.filter(s => s.id !== t.dataset.del); render(); }
     catch (err) { $("status").textContent = err.message; }
   }
+});
+document.addEventListener("submit", async e => {
+  const f = e.target.closest(".rvform"); if (!f) return;
+  e.preventDefault();
+  const id = f.dataset.spot, msg = f.querySelector(".msg:last-child"), btn = f.querySelector("button[type=submit]");
+  btn.disabled = true;
+  try {
+    await api(`/api/spots/${id}/reviews`, { method:"POST", body:JSON.stringify({ rating:Number(f.rating.value), text:f.text.value }) });
+    await Promise.all([loadReviews(id), refreshSpots()]);
+  } catch (err) { btn.disabled = false; msg.className = "msg err"; msg.textContent = err.message; }
 });
 $("q").addEventListener("input", e => { S.q = e.target.value; render(); });
 $("city").addEventListener("change", e => { S.city = e.target.value; renderFeed(); });

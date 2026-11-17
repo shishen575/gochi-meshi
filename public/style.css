@@ -80,3 +80,16 @@ textarea.input{min-height:84px;resize:vertical}
 .leaflet-popup-content p{margin:4px 0}
 .pending{font-size:12px;color:var(--muted)}
 [hidden]{display:none!important}
+
+.rate{font-size:14px}.rate b{font-variant-numeric:tabular-nums}
+.stars,.rate{color:var(--warm);letter-spacing:1px}
+.links{display:flex;flex-wrap:wrap;gap:8px}
+.links a.btn{text-decoration:none;display:inline-flex;align-items:center}
+.reviews{border-top:1px solid var(--line);padding-top:10px;display:grid;gap:10px}
+.rv-h{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:13px}
+.rv-h img{border-radius:50%}
+.rvform{display:grid;gap:8px}
+details.export{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-bottom:12px}
+details.export summary{cursor:pointer;font-weight:700}
+details.export .links{margin:8px 0}
+details.export ol{margin:6px 0 0;padding-left:1.3em}

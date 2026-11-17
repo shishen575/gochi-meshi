@@ -20,7 +20,7 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 
 /* ---------- 保存（JSONファイル、原子的に書き込み） ---------- */
 const DB_FILE = path.join(DATA_DIR, 'db.json');
-let db = { spots: [], votes: {} }; // votes: { spotId: [userId,...] }
+let db = { spots: [], votes: {}, reviews: {} }; // votes: { spotId: [userId,...] } / reviews: { spotId: [{id,userId,name,avatar,rating,text,createdAt}] }
 try { db = { ...db, ...JSON.parse(fs.readFileSync(DB_FILE, 'utf8')) }; } catch (e) {}
 let saveTimer = null;
 function save() {
@@ -189,7 +189,9 @@ app.get('/api/spots', (req, res) => {
   const uid = req.user && req.user.id;
   res.json(db.spots.map(s => {
     const v = db.votes[s.id] || [];
-    return { ...s, likes: v.length, liked: !!uid && v.includes(uid) };
+    const rv = db.reviews[s.id] || [];
+    const avg = rv.length ? Math.round(rv.reduce((a, r) => a + r.rating, 0) / rv.length * 10) / 10 : 0;
+    return { ...s, likes: v.length, liked: !!uid && v.includes(uid), ratingAvg: avg, ratingCount: rv.length };
   }));
 });
 
@@ -283,9 +285,66 @@ app.delete('/api/spots/:id', need, (req, res) => {
   const i = db.spots.findIndex(s => s.id === req.params.id);
   if (i < 0) return res.status(404).json({ error: '見つかりません' });
   if (db.spots[i].authorId !== req.user.id && !req.user.admin) return res.status(403).json({ error: '削除できるのは投稿者か管理者のみです' });
-  db.votes[db.spots[i].id] = undefined; delete db.votes[req.params.id];
+  delete db.votes[req.params.id]; delete db.reviews[req.params.id];
   db.spots.splice(i, 1); save();
   res.json({ ok: true });
+});
+
+/* ---------- 口コミ ---------- */
+const pubReview = (r, uid) => ({ id: r.id, name: r.name, avatar: r.avatar, rating: r.rating, text: r.text, createdAt: r.createdAt, mine: !!uid && r.userId === uid });
+app.get('/api/spots/:id/reviews', (req, res) => {
+  if (!db.spots.some(x => x.id === req.params.id)) return res.status(404).json({ error: '見つかりません' });
+  const uid = req.user && req.user.id;
+  res.json((db.reviews[req.params.id] || []).slice().sort((a, b) => b.createdAt - a.createdAt).map(r => pubReview(r, uid)));
+});
+// 1人1店につき1件（再投稿で上書き）
+app.post('/api/spots/:id/reviews', needJson, need, limit(20, 3600e3), (req, res) => {
+  const id = req.params.id;
+  if (!db.spots.some(x => x.id === id)) return res.status(404).json({ error: '見つかりません' });
+  const rating = Math.round(Number(req.body && req.body.rating));
+  if (!(rating >= 1 && rating <= 5)) return res.status(400).json({ error: '星は1〜5で選んでください' });
+  const text = String((req.body && req.body.text) ?? '').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').trim().slice(0, 300);
+  const list = db.reviews[id] || (db.reviews[id] = []);
+  const mine = list.find(r => r.userId === req.user.id);
+  const base = { userId: req.user.id, name: req.user.name, avatar: req.user.avatar, rating, text, createdAt: Date.now() };
+  if (mine) Object.assign(mine, base); else list.push({ id: crypto.randomBytes(6).toString('hex'), ...base });
+  save();
+  res.status(201).json({ ok: true });
+});
+app.delete('/api/spots/:id/reviews/:rid', need, (req, res) => {
+  const list = db.reviews[req.params.id] || [];
+  const i = list.findIndex(r => r.id === req.params.rid);
+  if (i < 0) return res.status(404).json({ error: '見つかりません' });
+  if (list[i].userId !== req.user.id && !req.user.admin) return res.status(403).json({ error: '削除できるのは投稿者か管理者のみです' });
+  list.splice(i, 1); save();
+  res.json({ ok: true });
+});
+
+/* ---------- Googleマイマップ用の書き出し（KML / CSV） ---------- */
+function exportSpots(q) {
+  return db.spots.filter(s => s.lat != null &&
+    (!q.pref || s.pref === q.pref) && (!q.city || s.city === q.city || (q.city.endsWith('市') && s.city.startsWith(q.city))) && (!q.genre || s.genre === q.genre));
+}
+const xml = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]));
+const ratingOf = id => { const rv = db.reviews[id] || []; return rv.length ? (rv.reduce((a, r) => a + r.rating, 0) / rv.length).toFixed(1) : ''; };
+const gmapsLink = s => 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(`${s.name} ${s.pref}${s.city}`);
+app.get('/export.kml', (req, res) => {
+  const rows = exportSpots(req.query), byGenre = {};
+  rows.forEach(s => (byGenre[s.genre] = byGenre[s.genre] || []).push(s));
+  const folders = Object.entries(byGenre).map(([g, list]) => `<Folder><name>${xml(g)}</name>` + list.map(s => {
+    const r = ratingOf(s.id);
+    const desc = `${s.pref} ${s.city}${s.price ? ' / ' + s.price : ''}${r ? ' / ★' + r : ''}\n${s.comment}\n${gmapsLink(s)}`;
+    return `<Placemark><name>${xml(s.name)}</name><description>${xml(desc)}</description><Point><coordinates>${s.lng},${s.lat},0</coordinates></Point></Placemark>`;
+  }).join('') + '</Folder>').join('');
+  res.set({ 'Content-Type': 'application/vnd.google-earth.kml+xml; charset=utf-8', 'Content-Disposition': 'attachment; filename="gochi-meshi.kml"' });
+  res.send(`<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>ご当地めし帖</name>${folders}</Document></kml>`);
+});
+app.get('/export.csv', (req, res) => {
+  const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  const head = ['名前', '緯度', '経度', 'ジャンル', '都道府県', '市区町村', '予算', 'おすすめ', '評価', 'Googleマップ'];
+  const lines = exportSpots(req.query).map(s => [s.name, s.lat, s.lng, s.genre, s.pref, s.city, s.price, s.comment, ratingOf(s.id), gmapsLink(s)].map(q).join(','));
+  res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="gochi-meshi.csv"' });
+  res.send('\ufeff' + [head.map(q).join(','), ...lines].join('\r\n'));
 });
 
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: '5m' }));

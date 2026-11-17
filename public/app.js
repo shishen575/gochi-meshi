@@ -12,7 +12,7 @@ const PRICES = ["〜1,000円","〜2,000円","〜3,000円","3,000円〜"];
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const S = { region:"", pref:"", city:"", genre:"", q:"", sort:"likes", view:"list", open:new Set(), reviews:{}, cities:{}, spots:[], me:null, guildRestricted:false, loaded:false };
+const S = { region:"", pref:"", city:"", genre:"", q:"", sort:"likes", view:"list", gkey:null, gfail:false, open:new Set(), reviews:{}, cities:{}, spots:[], me:null, guildRestricted:false, loaded:false };
 try { const f = JSON.parse(localStorage.getItem("gochi-filter")||"{}"); S.region=f.region||""; S.pref=f.pref||""; } catch(e){}
 function saveFilter(){ try{ localStorage.setItem("gochi-filter", JSON.stringify({region:S.region,pref:S.pref})); }catch(e){} }
 
@@ -154,17 +154,64 @@ function baseMap(el, opts){
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom:19, referrerPolicy:"origin", attribution:"© OpenStreetMap contributors" }).addTo(m);
   return m;
 }
+function popupHtml(s){
+  return `<h3>${esc(s.name)}</h3><p class="pp">${esc(s.pref)} ${esc(s.city)} ・ ${esc(s.genre)}${s.price?" ・ "+esc(s.price):""}</p><p>${esc(s.comment.length>120?s.comment.slice(0,120)+"…":s.comment)}</p><p>${s.ratingCount?`<b>${stars(s.ratingAvg)} ${s.ratingAvg.toFixed(1)}</b>（${s.ratingCount}件） ・ `:""}♥ ${s.likes}</p><p><a href="${gmapUrl(s)}" target="_blank" rel="noopener noreferrer">Googleマップで開く</a> ・ <a href="${routeUrl(s)}" target="_blank" rel="noopener noreferrer">ルート案内</a></p>`;
+}
+function mapCount(rows, pts){
+  const pending = rows.length - pts;
+  $("count").textContent = S.loaded ? `${rows.length}件` + (pending ? `（位置取得中 ${pending}件）` : "") : "";
+}
+
+/* --- Googleマップ版（GOOGLE_MAPS_KEY 設定時）。投稿が増えると自動でピンが増える --- */
+let gmap = null, gmarkers = [], ginfo = null, gReady = null;
+function loadGoogle(key){
+  if (gReady) return gReady;
+  gReady = new Promise((resolve, reject) => {
+    window.__gmReady = resolve;
+    window.gm_authFailure = () => { S.gfail = true; gmap = null; $("map").innerHTML = ""; renderMap(); };
+    const sc = document.createElement("script");
+    sc.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&callback=__gmReady&language=ja&region=JP`;
+    sc.async = true; sc.onerror = () => reject(new Error("load"));
+    document.head.appendChild(sc);
+  });
+  return gReady;
+}
+function renderGoogleMap(){
+  if (!gmap) {
+    gmap = new google.maps.Map($("map"), { center:{ lat:36.5, lng:138.2 }, zoom:5, mapTypeControl:false, streetViewControl:false, fullscreenControl:true });
+    ginfo = new google.maps.InfoWindow();
+  }
+  gmarkers.forEach(m => m.setMap(null)); gmarkers = [];
+  const rows = visibleSpots(), bounds = new google.maps.LatLngBounds(); let n = 0;
+  rows.forEach(s => {
+    if (s.lat == null) return;
+    const m = new google.maps.Marker({ position:{ lat:s.lat, lng:s.lng }, map:gmap, title:s.name });
+    m.addListener("click", () => { const d = document.createElement("div"); d.className = "gpop"; d.innerHTML = popupHtml(s); ginfo.setContent(d); ginfo.open({ map:gmap, anchor:m }); });
+    gmarkers.push(m); bounds.extend(m.getPosition()); n++;
+  });
+  const key = gmarkers.map(m => m.getPosition().toUrlValue()).join("|");
+  if (key !== lastKey) {
+    lastKey = key;
+    if (n) { gmap.fitBounds(bounds, 48); google.maps.event.addListenerOnce(gmap, "idle", () => { if (gmap.getZoom() > 15) gmap.setZoom(15); }); }
+    else { gmap.setCenter({ lat:36.5, lng:138.2 }); gmap.setZoom(5); }
+  }
+  mapCount(rows, n);
+}
+
 function renderMap(){
-  if (S.view !== "map" || typeof L === "undefined") return;
-  if (!map) { map = baseMap("map"); layer = L.layerGroup().addTo(map); }
+  if (S.view !== "map") return;
+  if (S.gkey && !S.gfail) {
+    loadGoogle(S.gkey).then(() => { if (!S.gfail && S.view === "map") renderGoogleMap(); }).catch(() => { S.gfail = true; renderMap(); });
+    return;
+  }
+  if (typeof L === "undefined") return;
+  if (!map) { $("map").innerHTML = ""; map = baseMap("map"); layer = L.layerGroup().addTo(map); }
   map.invalidateSize();
   layer.clearLayers();
   const rows = visibleSpots(), pts = [];
   rows.forEach(s => {
     if (s.lat == null) return;
-    const g = gmapUrl(s);
-    const html = `<h3>${esc(s.name)}</h3><p class="pp">${esc(s.pref)} ${esc(s.city)} ・ ${esc(s.genre)}${s.price?" ・ "+esc(s.price):""}</p><p>${esc(s.comment.length>120?s.comment.slice(0,120)+"…":s.comment)}</p><p>${s.ratingCount?`<b>${stars(s.ratingAvg)} ${s.ratingAvg.toFixed(1)}</b>（${s.ratingCount}件） ・ `:""}♥ ${s.likes}</p><p><a href="${g}" target="_blank" rel="noopener noreferrer">Googleマップで開く</a> ・ <a href="${routeUrl(s)}" target="_blank" rel="noopener noreferrer">ルート案内</a></p>`;
-    L.marker([s.lat, s.lng], { icon: pinIcon() }).bindPopup(html, { maxWidth:260 }).addTo(layer);
+    L.marker([s.lat, s.lng], { icon: pinIcon() }).bindPopup(popupHtml(s), { maxWidth:260 }).addTo(layer);
     pts.push([s.lat, s.lng]);
   });
   const key = pts.map(p => p.join(",")).join("|");
@@ -173,8 +220,7 @@ function renderMap(){
     if (pts.length) map.fitBounds(pts, { padding:[40,40], maxZoom:14 });
     else map.setView([36.5,138.2], 5);
   }
-  const pending = rows.length - pts.length;
-  $("count").textContent = S.loaded ? `${rows.length}件` + (pending ? `（位置取得中 ${pending}件）` : "") : "";
+  mapCount(rows, pts.length);
 }
 function applyView(){
   $("map").hidden = S.view !== "map"; $("feed").hidden = S.view === "map";
@@ -318,14 +364,27 @@ $("q").addEventListener("input", e => { S.q = e.target.value; render(); });
 $("city").addEventListener("change", e => { S.city = e.target.value; renderFeed(); });
 $("sort").addEventListener("change", e => { S.sort = e.target.value; renderFeed(); });
 
-async function refreshSpots(){ try { S.spots = await api("/api/spots"); render(); } catch (e) {} }
+async function refreshSpots(force){
+  try {
+    const next = await api("/api/spots"), key = JSON.stringify(next);
+    if (!force && key === S._spotsKey) return;
+    S._spotsKey = key;
+    // 口コミやフォームを入力中は、作業を壊さないよう描画を見送る
+    const ae = document.activeElement;
+    if (!force && ae && ae.closest && ae.closest(".reviews, .form")) { S.spots = next; return; }
+    S.spots = next; render();
+  } catch (e) {}
+}
+// 他の人の投稿も、開いたままで自動的にピンとして増える
+setInterval(() => { if (!document.hidden && S.loaded) refreshSpots(); }, 30000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && S.loaded) refreshSpots(); });
 
 (async () => {
   render();
   $("status").textContent = "読み込み中…";
   try {
-    const [me, spots, cities] = await Promise.all([api("/api/me"), api("/api/spots"), fetch("/cities.json").then(r => r.json()).catch(() => ({}))]);
-    S.cities = cities;
+    const [me, spots, cities, cfg] = await Promise.all([api("/api/me"), api("/api/spots"), fetch("/cities.json").then(r => r.json()).catch(() => ({})), api("/api/config").catch(() => ({}))]);
+    S.cities = cities; S.gkey = cfg.googleMapsKey || null; S._spotsKey = JSON.stringify(spots);
     S.me = me; S.spots = spots; S.guildRestricted = me.guildRestricted;
     $("status").textContent = "";
     if (me.loggedIn && !me.user.member) $("status").textContent = "このサーバーのメンバーではないため、閲覧のみ可能です。";

@@ -90,6 +90,16 @@
       "field_type": "text"
     },
     {
+      "name": "Google Maps APIキー（任意）",
+      "description": "設定すると地図がGoogleマップになり、投稿のたびに自動でピンが増えます。Google Cloud で Maps JavaScript API を有効にし、キーのHTTPリファラ制限に公開URLを登録してください。空ならOpenStreetMap。",
+      "env_variable": "GOOGLE_MAPS_KEY",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string|max:100",
+      "field_type": "text"
+    },
+    {
       "name": "Discord Client ID",
       "description": "Discord Developer Portal の OAuth2 > Client ID",
       "env_variable": "DISCORD_CLIENT_ID",

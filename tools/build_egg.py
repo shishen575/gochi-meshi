@@ -63,6 +63,8 @@ egg = {
             "GIT_REPO", "https://github.com/shishen575/gochi-meshi.git", "required|string|max:200"),
         var("ブランチ", "自動更新で追従するブランチ。", "GIT_BRANCH", "main", "required|string|max:60"),
         var("更新確認の間隔（分）", "何分ごとに更新を確認するか。1〜1440。", "UPDATE_INTERVAL", "5", "required|integer|min:1|max:1440"),
+        var("Google Maps APIキー（任意）", "設定すると地図がGoogleマップになり、投稿のたびに自動でピンが増えます。Google Cloud で Maps JavaScript API を有効にし、キーのHTTPリファラ制限に公開URLを登録してください。空ならOpenStreetMap。",
+            "GOOGLE_MAPS_KEY", "", "nullable|string|max:100"),
         var("Discord Client ID", "Discord Developer Portal の OAuth2 > Client ID",
             "DISCORD_CLIENT_ID", "", "required|string|max:40"),
         var("Discord Client Secret", "Discord Developer Portal の OAuth2 > Client Secret",

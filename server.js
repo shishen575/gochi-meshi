@@ -11,6 +11,7 @@ const PUBLIC_URL = (process.env.PUBLIC_URL || `http://localhost:${PORT}`).replac
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || '';
 const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
 const GUILD_ID = process.env.DISCORD_GUILD_ID || '';          // 空なら Discord ログインできる人なら誰でも投稿可
+const GOOGLE_MAPS_KEY = (process.env.GOOGLE_MAPS_KEY || '').trim();   // 設定するとGoogleマップで表示（未設定ならOpenStreetMap）
 const ADMIN_IDS = (process.env.ADMIN_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
 const SECURE = PUBLIC_URL.startsWith('https://');
@@ -66,7 +67,12 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' https://cdn.discordapp.com https://tile.openstreetmap.org data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'");
+  const G = GOOGLE_MAPS_KEY ? ' https://maps.googleapis.com https://maps.gstatic.com' : '';
+  res.setHeader('Content-Security-Policy',
+    "default-src 'self'; script-src 'self'" + G + "; connect-src 'self'" + G + "; " +
+    "img-src 'self' https://cdn.discordapp.com https://tile.openstreetmap.org data: blob:" + (GOOGLE_MAPS_KEY ? ' https://maps.googleapis.com https://maps.gstatic.com https://*.ggpht.com https://*.googleusercontent.com' : '') + "; " +
+    "style-src 'self' 'unsafe-inline'" + (GOOGLE_MAPS_KEY ? ' https://fonts.googleapis.com' : '') + "; font-src 'self'" + (GOOGLE_MAPS_KEY ? ' https://fonts.gstatic.com' : '') + "; " +
+    "worker-src blob:; frame-ancestors 'none'");
   const c = parseCookies(req.headers.cookie);
   req.user = readToken(c.sid);
   next();
@@ -179,6 +185,9 @@ function limit(max, windowMs) {
   };
 }
 setInterval(() => hits.clear(), 3600e3).unref();
+
+// 公開してよい設定（Googleマップのキーはリファラ制限をかけて公開する前提のもの）
+app.get('/api/config', (req, res) => res.json({ googleMapsKey: GOOGLE_MAPS_KEY || null }));
 
 app.get('/api/me', (req, res) => {
   const u = req.user;

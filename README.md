@@ -16,3 +16,8 @@ Discord OAuth2 ログイン、Node.js (Express)、JSON 保存、Cloudflare Tunne
 ## 更新
 `python3 tools/build_egg.py` でEggを再生成（インストール時にGitHubから取得するため、コード変更だけならEgg再生成は不要）。既存サーバーはファイルマネージャーで
 `server.js` と `public/` を差し替えて再起動（`data/` は保持されます）。
+
+## 地図をGoogleマップにする（任意）
+Google Cloud で「Maps JavaScript API」を有効にし、APIキーを作成（HTTPリファラ制限に公開URLを登録）。
+パネルの変数 `GOOGLE_MAPS_KEY` に入れて再起動すると、地図がGoogleマップになります。
+投稿のたびにピンが自動で増え、開いたままの画面も30秒ごとに更新されます。未設定ならOpenStreetMapです。

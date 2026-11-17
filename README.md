@@ -14,5 +14,5 @@ Discord OAuth2 ログイン、Node.js (Express)、JSON 保存、Cloudflare Tunne
    任意でサーバーID・管理者ID）を入力して起動。
 
 ## 更新
-`python3 tools/build_egg.py` でEggを再生成。既存サーバーはファイルマネージャーで
+`python3 tools/build_egg.py` でEggを再生成（インストール時にGitHubから取得するため、コード変更だけならEgg再生成は不要）。既存サーバーはファイルマネージャーで
 `server.js` と `public/` を差し替えて再起動（`data/` は保持されます）。

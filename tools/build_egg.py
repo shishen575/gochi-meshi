@@ -1,24 +1,20 @@
 #!/usr/bin/env python3
 """アプリ一式を埋め込んだ Pterodactyl Egg (PTDL_v2) を生成する。 使い方: python3 tools/build_egg.py"""
-import base64, io, json, os, tarfile
+import json, os
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FILES = ["server.js", "package.json", "start.sh", "public/index.html", "public/style.css", "public/app.js", "public/vendor/leaflet.js", "public/vendor/leaflet.css", "public/cities.json"]
 
-buf = io.BytesIO()
-with tarfile.open(fileobj=buf, mode="w:gz") as t:
-    for f in FILES:
-        info = t.gettarinfo(os.path.join(ROOT, f), arcname=f)
-        info.uid = info.gid = 0; info.uname = info.gname = ""
-        with open(os.path.join(ROOT, f), "rb") as fh:
-            t.addfile(info, fh)
-payload = base64.b64encode(buf.getvalue()).decode()
-
-install = f"""#!/bin/bash
-# ご当地めし帖 インストールスクリプト
+install = """#!/bin/bash
+# ご当地めし帖 インストールスクリプト（GitHub から取得。パネルの script_install は約64KBまでのため、アプリは埋め込まない）
 set -e
 cd /mnt/server
-echo "[install] アプリを展開します"
-echo "{payload}" | base64 -d | tar -xzf - -C /mnt/server
+REPO="${GIT_REPO:-https://github.com/shishen575/gochi-meshi.git}"
+BRANCH="${GIT_BRANCH:-main}"
+SLUG=$(echo "$REPO" | sed -E 's#^https://github.com/##; s#\\.git$##; s#/$##')
+echo "[install] ${SLUG} (${BRANCH}) を取得します"
+curl -fsSL "https://codeload.github.com/${SLUG}/tar.gz/refs/heads/${BRANCH}" -o /tmp/app.tar.gz
+tar -xzf /tmp/app.tar.gz -C /mnt/server --strip-components=1
+rm -f /tmp/app.tar.gz
 chmod +x start.sh
 ARCH=$(uname -m)
 case "$ARCH" in
@@ -30,6 +26,7 @@ echo "[install] cloudflared をダウンロードします ($CF)"
 curl -fsSL -o cloudflared "https://github.com/cloudflare/cloudflared/releases/latest/download/$CF"
 chmod +x cloudflared
 mkdir -p data
+ls -la /mnt/server
 echo "[install] 完了"
 """
 
@@ -80,4 +77,4 @@ out = os.path.join(ROOT, "pterodactyl", "egg-gochi-meshi.json")
 os.makedirs(os.path.dirname(out), exist_ok=True)
 with open(out, "w", encoding="utf-8") as f:
     json.dump(egg, f, ensure_ascii=False, indent=2)
-print("wrote", out, len(payload) // 1024, "KB payload")
+print("wrote", out)

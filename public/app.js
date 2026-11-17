@@ -106,7 +106,7 @@ let map = null, layer = null, lastKey = "";
 const pinIcon = (cls) => L.divIcon({ className:"", html:`<div class="pin ${cls||""}"></div>`, iconSize:[26,26], iconAnchor:[13,32], popupAnchor:[0,-30] });
 function baseMap(el, opts){
   const m = L.map(el, opts).setView([36.5,138.2], 5);
-  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom:19, attribution:"© OpenStreetMap contributors" }).addTo(m);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom:19, referrerPolicy:"origin", attribution:"© OpenStreetMap contributors" }).addTo(m);
   return m;
 }
 function renderMap(){

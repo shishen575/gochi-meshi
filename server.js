@@ -64,7 +64,7 @@ app.set('trust proxy', true);
 app.use(express.json({ limit: '16kb' }));
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Referrer-Policy', 'same-origin');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' https://cdn.discordapp.com https://tile.openstreetmap.org data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'");
   const c = parseCookies(req.headers.cookie);

@@ -128,6 +128,9 @@ function openForm(){
     `<optgroup label="${esc(r)}">${ps.map(p=>`<option ${p===S.pref?"selected":""}>${p}</option>`).join("")}</optgroup>`).join("");
   $("formSlot").innerHTML = `<form class="form" id="form">
     <h2 style="font-size:18px">飯を紹介する</h2>
+    <div class="field"><label for="f-gm">Googleマップのリンクから自動入力（任意）</label>
+      <div class="actions"><input class="input" id="f-gm" type="url" inputmode="url" placeholder="https://maps.app.goo.gl/…" style="flex:1;min-width:220px"><button class="btn" id="f-gmgo" type="button">自動入力</button></div>
+      <span class="msg" id="f-gmmsg">Googleマップアプリで店を開き、共有 → リンクをコピー、で貼れます。店名・場所・市区町村が入ります。</span></div>
     <div class="row">
       <div class="field"><label for="f-name">店名・料理名（必須）</label><input class="input" id="f-name" required maxlength="60"></div>
       <div class="field"><label for="f-genre">ジャンル</label><select class="input" id="f-genre">${GENRES.map(g=>`<option>${g}</option>`).join("")}</select></div>
@@ -169,6 +172,23 @@ function openForm(){
       if (fmap) setPin(g.lat, g.lng, 16);
       m.textContent = "見つかりました。ずれていたら地図をクリックして直せます。";
     } catch (err) { m.className = "msg err"; m.textContent = err.message; }
+  };
+  $("f-gmgo").onclick = async () => {
+    const m = $("f-gmmsg"), link = $("f-gm").value.trim();
+    m.className = "msg";
+    if (!link) { m.className = "msg err"; m.textContent = "リンクを貼ってください"; return; }
+    $("f-gmgo").disabled = true; m.textContent = "読み取り中…";
+    try {
+      const g = await api("/api/gmaps?url=" + encodeURIComponent(link));
+      if (g.name && !$("f-name").value.trim()) $("f-name").value = g.name;
+      if (g.pref) { $("f-pref").value = g.pref; fillCities(); }
+      if (g.city) $("f-city").value = g.city;
+      if (fmap) setPin(g.lat, g.lng, 16);
+      else pos = { lat: g.lat, lng: g.lng };
+      m.textContent = g.city ? "入力しました。内容を確認して投稿してください。" : "場所は入力しました。市区町村は候補から選んでください。";
+      if (!g.name) m.textContent += "（店名は手入力してください）";
+    } catch (err) { m.className = "msg err"; m.textContent = err.message; }
+    $("f-gmgo").disabled = false;
   };
   $("cancel").onclick = closeForm;
   $("form").addEventListener("submit", async e => {

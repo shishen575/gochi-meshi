@@ -1,6 +1,7 @@
 'use strict';
 const express = require('express');
 const crypto = require('crypto');
+const { parseGmapsUrl, pickCity, isAllowedHost } = require('./lib/gmaps');
 const fs = require('fs');
 const path = require('path');
 
@@ -141,6 +142,16 @@ function geocode(queries) {
   geoChain = job.catch(() => {});
   return job;
 }
+function reverseGeocode(lat, lng) {
+  const job = geoChain.then(async () => {
+    const url = 'https://nominatim.openstreetmap.org/reverse?' + new URLSearchParams({ lat: String(lat), lon: String(lng), format: 'jsonv2', zoom: '18', 'accept-language': 'ja' });
+    const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(6000) }).then(x => (x.ok ? x.json() : null)).catch(() => null);
+    await new Promise(res => setTimeout(res, 1100));
+    return r && r.address ? r.address : null;
+  });
+  geoChain = job.catch(() => {});
+  return job;
+}
 const spotQueries = s => [`${s.name} ${s.pref}${s.city}`, `${s.pref}${s.city}`];
 
 /* ---------- API ---------- */
@@ -206,6 +217,38 @@ app.post('/api/spots', needJson, need, limit(10, 3600e3), (req, res) => {
   if (spot.lat == null) {
     geocode(spotQueries(spot)).then(g => { if (g) { spot.lat = g.lat; spot.lng = g.lng; spot.geo = 'auto'; save(); } });
   }
+});
+
+// Googleマップのリンク（短縮URL可）から、店名・位置・都道府県・市区町村を自動入力する
+async function resolveGmapsUrl(input) {
+  let url = String(input).trim();
+  for (let i = 0; i < 5; i++) {
+    let u;
+    try { u = new URL(url); } catch (e) { return null; }
+    if (u.protocol !== 'https:' || !isAllowedHost(u.hostname)) return null;
+    const parsed = parseGmapsUrl(url);
+    if (parsed && parsed.lat != null) return { url, parsed };
+    const r = await fetch(url, { redirect: 'manual', headers: { 'User-Agent': 'Mozilla/5.0 (compatible; gochi-meshi)', 'Accept-Language': 'ja' }, signal: AbortSignal.timeout(6000) }).catch(() => null);
+    if (!r) return parsed ? { url, parsed } : null;
+    const loc = r.headers.get('location');
+    if (r.status >= 300 && r.status < 400 && loc) { url = new URL(loc, url).toString(); continue; }
+    return parsed ? { url, parsed } : null;
+  }
+  return null;
+}
+app.get('/api/gmaps', need, limit(15, 600e3), async (req, res) => {
+  const found = await resolveGmapsUrl(clean(req.query.url, 600));
+  if (!found) return res.status(400).json({ error: 'Googleマップのリンクを読み取れませんでした。共有ボタンでコピーしたリンクを貼ってください。' });
+  let { name, lat, lng } = found.parsed;
+  if (lat == null && name) { const g = await geocode([name]); if (g) { lat = g.lat; lng = g.lng; } }
+  if (lat == null) return res.status(404).json({ error: 'リンクから場所を特定できませんでした。' });
+  const out = { name, lat, lng, pref: '', city: '' };
+  const addr = await reverseGeocode(lat, lng);
+  if (addr) {
+    const pref = addr.province || addr.state || '';
+    if (PREFS.includes(pref)) { out.pref = pref; out.city = pickCity(addr, CITIES[pref] || []); }
+  }
+  res.json(out);
 });
 
 app.get('/api/geocode', need, limit(20, 600e3), async (req, res) => {

@@ -12,7 +12,7 @@ const PRICES = ["〜1,000円","〜2,000円","〜3,000円","3,000円〜"];
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const S = { region:"", pref:"", city:"", genre:"", q:"", sort:"likes", view:"list", gkey:null, gfail:false, open:new Set(), reviews:{}, cities:{}, spots:[], me:null, guildRestricted:false, loaded:false };
+const S = { region:"", pref:"", city:"", genre:"", q:"", sort:"likes", view:"list", favOnly:false, gkey:null, gfail:false, open:new Set(), reviews:{}, cities:{}, spots:[], me:null, guildRestricted:false, loaded:false };
 try { const f = JSON.parse(localStorage.getItem("gochi-filter")||"{}"); S.region=f.region||""; S.pref=f.pref||""; } catch(e){}
 function saveFilter(){ try{ localStorage.setItem("gochi-filter", JSON.stringify({region:S.region,pref:S.pref})); }catch(e){} }
 
@@ -48,7 +48,7 @@ function visibleSpots(ignoreCity){
   const prefs = S.pref ? [S.pref] : S.region ? REGIONS[S.region] : null;
   return S.spots.filter(s =>
     (!prefs || prefs.includes(s.pref)) && (ignoreCity || !S.city || cityMatch(s.city, S.city)) &&
-    (!S.genre || s.genre === S.genre) &&
+    (!S.genre || s.genre === S.genre) && (!S.favOnly || s.fav) &&
     (!q || (s.name+" "+s.comment+" "+s.city).toLowerCase().includes(q)));
 }
 
@@ -75,6 +75,11 @@ function renderFilters(){
   if (S.city && !cities.includes(S.city)) S.city = "";
   $("city").innerHTML = `<option value="">${S.pref ? `${S.pref}のすべての市区町村` : "すべての市区町村"}</option>` +
     cityOptions(cities, S.city, (c, all) => { const n = cnt(c); return (all ? c + "（全区）" : c) + (n ? `（${n}）` : ""); });
+  const loggedIn = !!(S.me && S.me.loggedIn);
+  $("favWrap").hidden = !loggedIn;
+  if (!loggedIn) S.favOnly = false;
+  $("favOnly").checked = S.favOnly;
+  $("favCount").textContent = S.spots.filter(s => s.fav).length;
   $("genres").innerHTML = [""].concat(GENRES).map(g => `<button class="chip" data-genre="${esc(g)}" aria-pressed="${S.genre===g}">${g||"すべて"}</button>`).join("");
 }
 
@@ -121,10 +126,10 @@ function renderExport(){
 function renderFeed(){
   const rows = visibleSpots();
   rows.sort(S.sort === "new" ? (a,b)=>b.createdAt-a.createdAt : (a,b)=>b.likes-a.likes || b.createdAt-a.createdAt);
-  $("title").textContent = [S.pref || S.region || "全国", S.city].filter(Boolean).join(" ") + "のおすすめ";
+  $("title").textContent = S.favOnly ? "お気に入り" : [S.pref || S.region || "全国", S.city].filter(Boolean).join(" ") + "のおすすめ";
   $("count").textContent = S.loaded ? `${rows.length}件` : "";
   if (!rows.length) {
-    $("feed").innerHTML = S.loaded ? `<div class="empty"><strong>この条件の紹介はまだありません</strong>あなたの地元のうまい店を、最初の一軒として紹介してみませんか。</div>` : "";
+    $("feed").innerHTML = S.loaded ? `<div class="empty"><strong>${S.favOnly?"お気に入りはまだありません":"この条件の紹介はまだありません"}</strong>${S.favOnly?"カードの☆を押すと、ここにためておけます。":"あなたの地元のうまい店を、最初の一軒として紹介してみませんか。"}</div>` : "";
     return;
   }
   const uid = S.me && S.me.loggedIn ? S.me.user.id : null;
@@ -133,7 +138,8 @@ function renderFeed(){
     const map = gmapUrl(s), route = routeUrl(s), isOpen = S.open.has(s.id);
     return `<article class="card">
       <div class="card-top"><div><h3>${esc(s.name)}</h3><div class="place">${esc(s.pref)} ${esc(s.city)}</div></div>
-        <button class="btn small like" data-like="${esc(s.id)}" aria-pressed="${s.liked}" ${canPost()?"":"disabled"} aria-label="いいね">♥ <span class="c">${s.likes}</span></button></div>
+        <span class="rowbtns"><button class="btn small favbtn" data-fav="${esc(s.id)}" aria-pressed="${!!s.fav}" ${S.me&&S.me.loggedIn?"":"disabled"} title="${S.me&&S.me.loggedIn?"お気に入り":"ログインするとお気に入りに入れられます"}" aria-label="お気に入り">${s.fav?"★":"☆"} <span class="fl">お気に入り</span></button>
+        <button class="btn small like" data-like="${esc(s.id)}" aria-pressed="${s.liked}" ${canPost()?"":"disabled"} aria-label="いいね">♥ <span class="c">${s.likes}</span></button></span></div>
       <div class="tags"><span class="tag">${esc(s.genre)}</span>${s.price?`<span class="tag price">${esc(s.price)}</span>`:""}</div>
       <p class="comment">${esc(s.comment)}</p>
       ${s.ratingCount?`<div class="rate" title="口コミ平均">${stars(s.ratingAvg)} <b>${s.ratingAvg.toFixed(1)}</b> <span class="place">（口コミ${s.ratingCount}件）</span></div>`:""}
@@ -317,6 +323,13 @@ function openForm(){
 
 document.addEventListener("click", async e => {
   const t = e.target.closest("button"); if (!t) return;
+  if (t.dataset.fav) {
+    const sp = S.spots.find(x => x.id === t.dataset.fav); if (!sp) return;
+    t.disabled = true;
+    try { const r = await api(`/api/spots/${sp.id}/fav`, { method:"POST", body:"{}" }); sp.fav = r.fav; S._spotsKey = JSON.stringify(S.spots); render(); }
+    catch (err) { $("status").textContent = err.message; t.disabled = false; }
+    return;
+  }
   if (t.dataset.rv) {
     const id = t.dataset.rv;
     if (S.open.has(id)) { S.open.delete(id); return renderFeed(); }
@@ -360,6 +373,7 @@ document.addEventListener("submit", async e => {
     await Promise.all([loadReviews(id), refreshSpots()]);
   } catch (err) { btn.disabled = false; msg.className = "msg err"; msg.textContent = err.message; }
 });
+$("favOnly").addEventListener("change", e => { S.favOnly = e.target.checked; render(); });
 $("q").addEventListener("input", e => { S.q = e.target.value; render(); });
 $("city").addEventListener("change", e => { S.city = e.target.value; renderFeed(); });
 $("sort").addEventListener("change", e => { S.sort = e.target.value; renderFeed(); });

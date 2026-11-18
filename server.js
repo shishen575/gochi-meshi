@@ -21,7 +21,7 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 
 /* ---------- 保存（JSONファイル、原子的に書き込み） ---------- */
 const DB_FILE = path.join(DATA_DIR, 'db.json');
-let db = { spots: [], votes: {}, reviews: {} }; // votes: { spotId: [userId,...] } / reviews: { spotId: [{id,userId,name,avatar,rating,text,createdAt}] }
+let db = { spots: [], votes: {}, reviews: {}, favs: {} }; // favs: { userId: [spotId,...] } / votes: { spotId: [userId,...] } / reviews: { spotId: [{id,userId,name,avatar,rating,text,createdAt}] }
 try { db = { ...db, ...JSON.parse(fs.readFileSync(DB_FILE, 'utf8')) }; } catch (e) {}
 let saveTimer = null;
 function save() {
@@ -196,11 +196,12 @@ app.get('/api/me', (req, res) => {
 
 app.get('/api/spots', (req, res) => {
   const uid = req.user && req.user.id;
+  const myFavs = new Set((uid && db.favs[uid]) || []);
   res.json(db.spots.map(s => {
     const v = db.votes[s.id] || [];
     const rv = db.reviews[s.id] || [];
     const avg = rv.length ? Math.round(rv.reduce((a, r) => a + r.rating, 0) / rv.length * 10) / 10 : 0;
-    return { ...s, likes: v.length, liked: !!uid && v.includes(uid), ratingAvg: avg, ratingCount: rv.length };
+    return { ...s, likes: v.length, liked: !!uid && v.includes(uid), fav: !!uid && myFavs.has(s.id), ratingAvg: avg, ratingCount: rv.length };
   }));
 });
 
@@ -295,8 +296,23 @@ app.delete('/api/spots/:id', need, (req, res) => {
   if (i < 0) return res.status(404).json({ error: '見つかりません' });
   if (db.spots[i].authorId !== req.user.id && !req.user.admin) return res.status(403).json({ error: '削除できるのは投稿者か管理者のみです' });
   delete db.votes[req.params.id]; delete db.reviews[req.params.id];
+  Object.keys(db.favs).forEach(u => { db.favs[u] = db.favs[u].filter(x => x !== req.params.id); if (!db.favs[u].length) delete db.favs[u]; });
   db.spots.splice(i, 1); save();
   res.json({ ok: true });
+});
+
+/* ---------- お気に入り（ログインしていれば誰でも。本人にだけ見える） ---------- */
+const needLogin = (req, res, next) => (req.user ? next() : res.status(401).json({ error: 'ログインが必要です' }));
+app.post('/api/spots/:id/fav', needJson, needLogin, limit(120, 600e3), (req, res) => {
+  const id = req.params.id, uid = req.user.id;
+  if (!db.spots.some(x => x.id === id)) return res.status(404).json({ error: '見つかりません' });
+  const list = db.favs[uid] || (db.favs[uid] = []);
+  const i = list.indexOf(id);
+  if (i >= 0) list.splice(i, 1);
+  else { if (list.length >= 500) return res.status(400).json({ error: 'お気に入りは500件までです' }); list.push(id); }
+  if (!list.length) delete db.favs[uid];
+  save();
+  res.json({ fav: i < 0 });
 });
 
 /* ---------- 口コミ ---------- */

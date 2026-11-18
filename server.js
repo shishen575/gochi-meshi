@@ -32,10 +32,12 @@ const SECURE = PUBLIC_URL.startsWith('https://');
 const SESSION_DAYS = 14;
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
+const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 /* ---------- 保存（JSONファイル、原子的に書き込み） ---------- */
 const DB_FILE = path.join(DATA_DIR, 'db.json');
-let db = { spots: [], votes: {}, reviews: {}, favs: {}, granted: {} }; // favs: { userId: [spotId,...] } / votes: { spotId: [userId,...] } / reviews: { spotId: [{id,userId,name,avatar,rating,text,createdAt}] }
+let db = { spots: [], votes: {}, reviews: {}, favs: {}, granted: {}, uploads: {} }; // favs: { userId: [spotId,...] } / votes: { spotId: [userId,...] } / reviews: { spotId: [{id,userId,name,avatar,rating,text,createdAt}] }
 try { db = { ...db, ...JSON.parse(fs.readFileSync(DB_FILE, 'utf8')) }; } catch (e) {}
 let saveTimer = null;
 function save() {
@@ -259,7 +261,14 @@ const LUMI_MANIFEST = {
     { key: 'min_posts', type: 'number', label: 'ロールを付与する投稿数', help: 'この件数のお店を投稿した人に、選んだロールを付けます。0で付与しません。' },
     { key: 'members_only', type: 'toggle', label: '投稿・いいね・口コミをサーバーのメンバーに限定', help: 'オンにすると、このサーバーのメンバーだけが書き込めます。' },
     { key: 'show_rank', type: 'toggle', label: '投稿者名の横に活動ランクを表示', help: 'Lumiの活動ランク（ロール名）を、お店のカードに表示します。' },
-    { key: 'notify_reviews', type: 'toggle', label: '口コミも通知する', help: 'オフのときは、新しいお店の追加だけを通知します。' }
+    { key: 'notify_reviews', type: 'toggle', label: '口コミも通知する', help: 'オフのときは、新しいお店の追加だけを通知します。' },
+    { key: 'thread_by_pref', type: 'toggle', label: '都道府県ごとのスレッドにまとめる', help: 'オンにすると、通知を「東京都」のようなスレッドに分けて投稿します（なければ作ります）。' },
+    { key: 'channel_hokkaido_tohoku', type: 'channel', label: '通知先：北海道・東北', help: '選ばない地域は、通常の通知先に送ります。' },
+    { key: 'channel_kanto', type: 'channel', label: '通知先：関東', help: '' },
+    { key: 'channel_chubu', type: 'channel', label: '通知先：中部', help: '' },
+    { key: 'channel_kinki', type: 'channel', label: '通知先：近畿', help: '' },
+    { key: 'channel_chugoku_shikoku', type: 'channel', label: '通知先：中国・四国', help: '' },
+    { key: 'channel_kyushu_okinawa', type: 'channel', label: '通知先：九州・沖縄', help: '' }
   ]
 };
 const lumi = createLumi({ baseUrl: LUMI_URL, dataDir: DATA_DIR, connectToken: LUMI_CONNECT_TOKEN, manifest: LUMI_MANIFEST });
@@ -310,10 +319,23 @@ async function maybeGrant(userId) {
 
 /* ---------- 通知の送り先（Lumi連携 → 中継 → BOT直接 → Webhook の順） ---------- */
 const anySink = () => lumi.enabled() || relayReady || botOk || hookOk;
-async function sendEmbed(embed) {
+// 地域ごとの通知先: Lumiへ route（地域キー）と thread（都道府県名）を添えて送り、宛先の決定はLumi側（ダッシュボードの設定）に任せる。
+const REGION_KEYS = {
+  hokkaido_tohoku: ['北海道', '青森県', '岩手県', '宮城県', '秋田県', '山形県', '福島県'],
+  kanto: ['茨城県', '栃木県', '群馬県', '埼玉県', '千葉県', '東京都', '神奈川県'],
+  chubu: ['新潟県', '富山県', '石川県', '福井県', '山梨県', '長野県', '岐阜県', '静岡県', '愛知県'],
+  kinki: ['三重県', '滋賀県', '京都府', '大阪府', '兵庫県', '奈良県', '和歌山県'],
+  chugoku_shikoku: ['鳥取県', '島根県', '岡山県', '広島県', '山口県', '徳島県', '香川県', '愛媛県', '高知県'],
+  kyushu_okinawa: ['福岡県', '佐賀県', '長崎県', '熊本県', '大分県', '宮崎県', '鹿児島県', '沖縄県']
+};
+const routeFor = sp => ({ route: Object.keys(REGION_KEYS).find(k => REGION_KEYS[k].includes(sp.pref)) || '', thread: sp.pref });
+let routeOffUntil = 0; // 古いLumiが route/thread を拒否した場合は、しばらく付けずに送る
+async function sendEmbed(embed, routing) {
   try {
     if (lumi.enabled()) {
-      const r = await lumi.call('POST', '/internal/meshi-notify', { embed });
+      const withRoute = routing && routing.route && Date.now() > routeOffUntil;
+      let r = await lumi.call('POST', '/internal/meshi-notify', withRoute ? { embed, ...routing } : { embed });
+      if (!r.ok && withRoute && r.status === 400) { routeOffUntil = Date.now() + 3600e3; r = await lumi.call('POST', '/internal/meshi-notify', { embed }); }
       if (r.ok) return;
       if (!(relayReady || botOk || hookOk)) { if (!r.blocked) console.warn('Lumi通知に失敗:', r.status, r.status === 403 ? '（Lumiのダッシュボードで通知をオンにし、チャンネルを選んでください）' : ''); return; }
     }
@@ -348,7 +370,8 @@ async function notifyDiscord(spot) {
     author: { name: `${mdEsc(spot.authorName).slice(0, 60)} さんの新しいおすすめ` }, timestamp: new Date(spot.createdAt).toISOString()
   };
   if (avatarOk(spot.authorAvatar)) embed.author.icon_url = spot.authorAvatar;
-  await sendEmbed(embed);
+  if (spot.images && spot.images[0] && /^https:\/\//.test(PUBLIC_URL)) embed.image = { url: `${PUBLIC_URL}/img/${spot.images[0]}` };
+  await sendEmbed(embed, routeFor(spot));
 }
 async function notifyReview(spot, review) {
   if (!anySink() || !toBool(await lumiSetting('notify_reviews', false))) return;
@@ -431,6 +454,7 @@ app.post('/api/spots', needJson, need, limit(10, 3600e3), (req, res) => {
   if (db.spots.length >= 20000) return res.status(507).json({ error: '保存上限に達しました' });
   const lat = Number(b.lat), lng = Number(b.lng);
   if (b.lat != null && b.lng != null && inJapan(lat, lng)) { spot.lat = +lat.toFixed(6); spot.lng = +lng.toFixed(6); spot.geo = 'user'; }
+  spot.images = claimImages(b.images, req.user.id, req.user.admin, spot.id);
   db.spots.push(spot); save();
   notifyDiscord(spot).then(() => maybeGrant(req.user.id)).catch(() => {});
   res.status(201).json({ ...spot, likes: 0, liked: false });
@@ -524,6 +548,11 @@ app.patch('/api/spots/:id', needJson, need, limit(60, 3600e3), (req, res) => {
   if (!PRICES.includes(next.price)) next.price = '';
   const areaChanged = next.pref !== sp.pref || next.city !== sp.city, nameChanged = next.name !== sp.name;
   Object.assign(sp, next);
+  if (Array.isArray(b.images)) {
+    const prev = sp.images || [];
+    sp.images = claimImages(b.images, req.user.id, req.user.admin, sp.id);
+    releaseImages(prev.filter(x => !sp.images.includes(x)));
+  }
   const lat = Number(b.lat), lng = Number(b.lng);
   let relocate = false;
   if (b.lat != null && b.lng != null && inJapan(lat, lng)) { sp.lat = +lat.toFixed(6); sp.lng = +lng.toFixed(6); sp.geo = 'user'; sp.v = 2; }
@@ -558,6 +587,7 @@ app.delete('/api/spots/:id', need, (req, res) => {
   const i = db.spots.findIndex(s => s.id === req.params.id);
   if (i < 0) return res.status(404).json({ error: '見つかりません' });
   if (db.spots[i].authorId !== req.user.id && !req.user.admin) return res.status(403).json({ error: '削除できるのは投稿者か管理者のみです' });
+  releaseImages(db.spots[i].images);
   delete db.votes[req.params.id]; delete db.reviews[req.params.id];
   Object.keys(db.favs).forEach(u => { db.favs[u] = db.favs[u].filter(x => x !== req.params.id); if (!db.favs[u].length) delete db.favs[u]; });
   db.spots.splice(i, 1); save();
@@ -577,6 +607,64 @@ app.post('/api/spots/:id/fav', needJson, needLogin, limit(120, 600e3), (req, res
   save();
   res.json({ fav: i < 0 });
 });
+
+/* ---------- 写真 ---------- */
+// JPEGから位置情報などのメタデータ（EXIF/XMP: APP1、APP13、コメント）を取り除く。不正な構造ならnull
+function stripJpeg(buf) {
+  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return null;
+  const out = [buf.subarray(0, 2)];
+  let i = 2;
+  while (i + 1 < buf.length) {
+    if (buf[i] !== 0xff) return null;
+    let m = buf[i + 1];
+    while (m === 0xff && i + 2 < buf.length) { i++; m = buf[i + 1]; }
+    if (m === 0xda || m === 0xd9) { out.push(buf.subarray(i)); return Buffer.concat(out); }
+    if ((m >= 0xd0 && m <= 0xd7) || m === 0x01) { out.push(buf.subarray(i, i + 2)); i += 2; continue; }
+    if (i + 3 >= buf.length) return null;
+    const len = buf.readUInt16BE(i + 2);
+    if (len < 2 || i + 2 + len > buf.length) return null;
+    if (!(m === 0xe1 || m === 0xed || m === 0xfe)) out.push(buf.subarray(i, i + 2 + len));
+    i += 2 + len;
+  }
+  return null;
+}
+const IMG_RE = /^[0-9a-f]{16}$/;
+const imgPath = id => path.join(UPLOAD_DIR, id + '.jpg');
+function releaseImages(ids) {
+  (ids || []).forEach(id => { delete db.uploads[id]; fs.unlink(imgPath(id), () => {}); });
+}
+// 投稿に写真を紐づける。自分がアップロードした（管理者は他人のも可）、まだ他の投稿に使われていないものだけ
+function claimImages(ids, uid, admin, spotId) {
+  const list = [...new Set((Array.isArray(ids) ? ids : []).filter(x => typeof x === 'string' && IMG_RE.test(x)))].slice(0, 3);
+  const out = [];
+  for (const id of list) {
+    const u = db.uploads[id];
+    if (u && (u.userId === uid || admin) && (!u.spotId || u.spotId === spotId)) { u.spotId = spotId; out.push(id); }
+  }
+  return out;
+}
+app.post('/api/uploads', need, limit(30, 3600e3), express.raw({ type: 'image/jpeg', limit: '2mb' }), (req, res) => {
+  if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(415).json({ error: 'JPEG画像を送ってください' });
+  const pending = Object.values(db.uploads).filter(u => u.userId === req.user.id && !u.spotId).length;
+  if (pending >= 12) return res.status(429).json({ error: 'アップロード待ちの写真が多すぎます。投稿するか、しばらく待ってください' });
+  const clean = stripJpeg(req.body);
+  if (!clean) return res.status(400).json({ error: '画像を読み取れませんでした' });
+  const id = crypto.randomBytes(8).toString('hex');
+  fs.writeFile(imgPath(id), clean, err => {
+    if (err) return res.status(500).json({ error: '保存できませんでした' });
+    db.uploads[id] = { userId: req.user.id, createdAt: Date.now(), spotId: null }; save();
+    res.status(201).json({ id });
+  });
+});
+app.get('/img/:id', (req, res) => {
+  if (!IMG_RE.test(req.params.id)) return res.status(404).end();
+  res.sendFile(imgPath(req.params.id), { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' } }, err => { if (err && !res.headersSent) res.status(404).end(); });
+});
+// 投稿に紐づかないまま1時間たった写真は消す
+setInterval(() => {
+  const old = Object.entries(db.uploads).filter(([, u]) => !u.spotId && Date.now() - u.createdAt > 3600e3).map(([id]) => id);
+  if (old.length) { releaseImages(old); save(); }
+}, 600e3).unref();
 
 /* ---------- 口コミ ---------- */
 const pubReview = (r, uid) => ({ id: r.id, name: r.name, avatar: r.avatar, rating: r.rating, text: r.text, createdAt: r.createdAt, mine: !!uid && r.userId === uid });

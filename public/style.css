@@ -103,3 +103,15 @@ details.export ol{margin:6px 0 0;padding-left:1.3em}
 .locedit{display:grid;gap:8px;border-top:1px solid var(--line);padding-top:10px}
 .card.focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 details.hours{font-size:14px}details.hours summary{cursor:pointer;color:var(--accent)}.hrs{white-space:pre-wrap;margin-top:4px}
+
+.photos{display:flex;gap:8px;flex-wrap:wrap}
+.ph{border:0;padding:0;background:none;cursor:zoom-in;border-radius:8px;overflow:hidden;line-height:0}
+.ph img{width:132px;height:100px;object-fit:cover;display:block;border-radius:8px;border:1px solid var(--line)}
+.thumbs{display:flex;gap:8px;flex-wrap:wrap}
+.thumb{position:relative;line-height:0}
+.thumb img{width:96px;height:72px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
+.thumb .x{position:absolute;top:-6px;right:-6px;width:24px;height:24px;border-radius:50%;border:0;background:var(--warm);color:#fff;cursor:pointer;line-height:1;font-size:16px}
+.pimg{display:block;width:100%;max-height:120px;object-fit:cover;border-radius:6px;margin-bottom:6px}
+.lightbox{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.82);display:grid;place-items:center;padding:16px;cursor:zoom-out}
+.lightbox img{max-width:100%;max-height:100%;border-radius:8px}
+.lb-close{position:absolute;top:max(12px,env(safe-area-inset-top,0px));right:12px;width:40px;height:40px;border-radius:50%;border:0;background:#fff;color:#000;font-size:22px;cursor:pointer}

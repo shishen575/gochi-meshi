@@ -141,6 +141,7 @@ function renderFeed(){
         <span class="rowbtns"><button class="btn small favbtn" data-fav="${esc(s.id)}" aria-pressed="${!!s.fav}" ${S.me&&S.me.loggedIn?"":"disabled"} title="${S.me&&S.me.loggedIn?"お気に入り":"ログインするとお気に入りに入れられます"}" aria-label="お気に入り">${s.fav?"★":"☆"} <span class="fl">お気に入り</span></button>
         <button class="btn small like" data-like="${esc(s.id)}" aria-pressed="${s.liked}" ${canPost()?"":"disabled"} aria-label="いいね">♥ <span class="c">${s.likes}</span></button></span></div>
       <div class="tags"><span class="tag">${esc(s.genre)}</span>${s.price?`<span class="tag price">${esc(s.price)}</span>`:""}</div>
+      ${s.images&&s.images.length?`<div class="photos">${s.images.map(id=>`<button type="button" class="ph" data-photo="${esc(id)}" aria-label="写真を拡大"><img src="/img/${esc(id)}" alt="${esc(s.name)}の写真" loading="lazy"></button>`).join("")}</div>`:""}
       <p class="comment">${esc(s.comment)}</p>
       ${s.hours||s.phone?`<details class="hours"><summary>営業時間・電話</summary>${s.hours?`<div class="hrs">${esc(s.hours)}</div>`:""}${s.phone?`<div class="hrs">☎ ${esc(s.phone)}</div>`:""}<div class="msg">変わることがあります。お出かけ前にGoogleマップで確認してください。</div></details>`:""}
       ${s.ratingCount?`<div class="rate" title="口コミ平均">${stars(s.ratingAvg)} <b>${s.ratingAvg.toFixed(1)}</b> <span class="place">（口コミ${s.ratingCount}件）</span></div>`:""}
@@ -166,7 +167,7 @@ function baseMap(el, opts){
   return m;
 }
 function popupHtml(s){
-  return `<h3>${esc(s.name)}</h3><p class="pp">${esc(s.pref)} ${esc(s.city)} ・ ${esc(s.genre)}${s.price?" ・ "+esc(s.price):""}</p><p>${esc(s.comment.length>120?s.comment.slice(0,120)+"…":s.comment)}</p><p>${s.ratingCount?`<b>${stars(s.ratingAvg)} ${s.ratingAvg.toFixed(1)}</b>（${s.ratingCount}件） ・ `:""}♥ ${s.likes}</p>${s.geo==="city"?`<p class="pp">※位置は市区町村の中心（目安）です</p>`:""}<p><a href="${gmapUrl(s)}" target="_blank" rel="noopener noreferrer">Googleマップで開く</a> ・ <a href="${routeUrl(s)}" target="_blank" rel="noopener noreferrer">ルート案内</a></p>`;
+  return `${s.images&&s.images[0]?`<img class="pimg" src="/img/${esc(s.images[0])}" alt="">`:""}<h3>${esc(s.name)}</h3><p class="pp">${esc(s.pref)} ${esc(s.city)} ・ ${esc(s.genre)}${s.price?" ・ "+esc(s.price):""}</p><p>${esc(s.comment.length>120?s.comment.slice(0,120)+"…":s.comment)}</p><p>${s.ratingCount?`<b>${stars(s.ratingAvg)} ${s.ratingAvg.toFixed(1)}</b>（${s.ratingCount}件） ・ `:""}♥ ${s.likes}</p>${s.geo==="city"?`<p class="pp">※位置は市区町村の中心（目安）です</p>`:""}<p><a href="${gmapUrl(s)}" target="_blank" rel="noopener noreferrer">Googleマップで開く</a> ・ <a href="${routeUrl(s)}" target="_blank" rel="noopener noreferrer">ルート案内</a></p>`;
 }
 function mapCount(rows, pts){
   const pending = rows.length - pts;
@@ -254,6 +255,17 @@ function mountLocEditor(){
 }
 function render(){ renderUser(); renderFilters(); renderFeed(); renderMap(); renderExport(); }
 
+async function resizeToJpeg(file, max = 1280) {
+  if (!/^image\//.test(file.type)) throw new Error("画像ファイルを選んでください");
+  let bmp;
+  try { bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); }
+  catch (e) { throw new Error("この画像は読み込めませんでした（JPEG・PNG・WebPなどを選んでください）"); }
+  const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas"); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+  const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(bmp, 0, 0, c.width, c.height);
+  return await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error("画像を変換できませんでした")), "image/jpeg", 0.82));
+}
+
 function openForm(edit){
   const E = edit || null;
   const prefOpts = `<option value="">選んでください</option>` + Object.entries(REGIONS).map(([r,ps]) =>
@@ -279,6 +291,9 @@ function openForm(edit){
     <div class="field"><label>場所（任意）：地図をクリックしてピンを置けます。置かない場合は店名と地域から自動で探します。</label>
       <div class="actions"><button class="btn small" id="f-find" type="button">店名と地域から場所を検索</button><span class="msg" id="f-geomsg"></span></div>
       <div id="f-map" class="map mini"></div></div>
+    <div class="field"><label for="f-photos">写真（任意・3枚まで）</label>
+      <input class="input" id="f-photos" type="file" accept="image/*" multiple>
+      <div class="thumbs" id="f-thumbs"></div><span class="msg" id="f-pmsg">位置情報などの撮影データは、アップロード時に取り除きます。</span></div>
     <div class="field"><label for="f-comment">おすすめポイント（必須）</label><textarea class="input" id="f-comment" required maxlength="400" placeholder="何がうまいか、頼むべき一品、混み具合など"></textarea></div>
     <div class="actions"><button class="btn primary" type="submit">${E?"保存する":"投稿する"}</button><button class="btn" id="cancel" type="button">やめる</button><span class="msg" id="fmsg"></span></div>
   </form>`;
@@ -287,6 +302,29 @@ function openForm(edit){
     sel.innerHTML = `<option value="">${p ? "市区町村を選んでください" : "先に都道府県を選んでください"}</option>` + cityOptions(S.cities[p] || [], keep || "", (c, all) => all ? c + "（全区）" : c); };
   $("f-pref").addEventListener("change", () => fillCities()); fillCities(E ? E.city : "");
   if (E) { $("f-name").value = E.name; $("f-genre").value = E.genre; $("f-price").value = E.price || ""; $("f-hours").value = E.hours || ""; $("f-phone").value = E.phone || ""; $("f-comment").value = E.comment; }
+  // 写真: 端末で縮小してJPEGにしてから送る（撮影データも消える）
+  let photos = E && E.images ? [...E.images] : [];
+  const drawThumbs = () => {
+    $("f-thumbs").innerHTML = photos.map(id => `<span class="thumb"><img src="/img/${id}" alt="" loading="lazy"><button type="button" class="x" data-rmphoto="${id}" aria-label="この写真を外す">×</button></span>`).join("");
+    $("f-photos").disabled = photos.length >= 3;
+  };
+  drawThumbs();
+  $("f-thumbs").addEventListener("click", ev => { const b = ev.target.closest("[data-rmphoto]"); if (b) { photos = photos.filter(x => x !== b.dataset.rmphoto); drawThumbs(); } });
+  $("f-photos").addEventListener("change", async ev => {
+    const files = [...ev.target.files].slice(0, 3 - photos.length), m = $("f-pmsg");
+    ev.target.value = ""; m.className = "msg";
+    for (const f of files) {
+      m.textContent = "アップロード中…";
+      try {
+        const blob = await resizeToJpeg(f);
+        const r = await fetch("/api/uploads", { method:"POST", credentials:"same-origin", headers:{ "Content-Type":"image/jpeg" }, body:blob });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || "アップロードできませんでした");
+        photos.push(j.id); drawThumbs();
+      } catch (err) { m.className = "msg err"; m.textContent = err.message; return; }
+    }
+    m.textContent = photos.length ? "写真を追加しました。" : "";
+  });
   // ジャンルは、手で選ぶまでは店名・自動入力の結果から自動で決める
   let genreDirty = !!E;
   $("f-genre").addEventListener("change", () => { genreDirty = true; $("f-gnote").textContent = ""; });
@@ -357,7 +395,7 @@ function openForm(edit){
     const btn = e.submitter; if (btn) btn.disabled = true;
     const pc = $("f-pref").value, cc = $("f-city").value.trim();
     if (S.cities[pc] && !S.cities[pc].includes(cc)) { if (btn) btn.disabled = false; const m=$("fmsg"); m.className="msg err"; m.textContent="市区町村は候補から選んでください（例：札幌市中央区）"; return; }
-    const data = { name:$("f-name").value, genre:$("f-genre").value, pref:$("f-pref").value, city:$("f-city").value, price:$("f-price").value, comment:$("f-comment").value, hours:$("f-hours").value, phone:$("f-phone").value };
+    const data = { name:$("f-name").value, genre:$("f-genre").value, pref:$("f-pref").value, city:$("f-city").value, price:$("f-price").value, comment:$("f-comment").value, hours:$("f-hours").value, phone:$("f-phone").value, images:photos };
     if (pos && !(orig && pos.lat === orig.lat && pos.lng === orig.lng)) { data.lat = pos.lat; data.lng = pos.lng; }
     try {
       if (E) {
@@ -377,8 +415,17 @@ function openForm(edit){
   $("f-name").focus();
 }
 
+function openLightbox(id){
+  const ov = document.createElement("div"); ov.className = "lightbox"; ov.setAttribute("role", "dialog"); ov.setAttribute("aria-label", "写真");
+  ov.innerHTML = `<img src="/img/${esc(id)}" alt=""><button type="button" class="lb-close" aria-label="閉じる">×</button>`;
+  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = e => { if (e.key === "Escape") close(); };
+  ov.addEventListener("click", close); document.addEventListener("keydown", onKey);
+  document.body.appendChild(ov); ov.querySelector(".lb-close").focus();
+}
 document.addEventListener("click", async e => {
   const t = e.target.closest("button"); if (!t) return;
+  if (t.dataset.photo) { openLightbox(t.dataset.photo); return; }
   if (t.dataset.edit) { const sp = S.spots.find(x => x.id === t.dataset.edit); if (sp) { openForm(sp); $("formSlot").scrollIntoView({ block:"start", behavior:"smooth" }); } return; }
   if (t.dataset.loc) { S.locEdit = S.locEdit === t.dataset.loc ? null : t.dataset.loc; return renderFeed(); }
   if (t.dataset.locsave) {

@@ -120,6 +120,26 @@
       "field_type": "text"
     },
     {
+      "name": "Webhookの表示名（任意）",
+      "description": "Webhookで通知するときの送信者名。BOTっぽく見せたいときは名前を入れる（例: Lumi）。空なら「ご当地めし帖」。",
+      "env_variable": "DISCORD_WEBHOOK_NAME",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string|max:80",
+      "field_type": "text"
+    },
+    {
+      "name": "Webhookのアイコン画像URL（任意）",
+      "description": "送信者のアイコン。https のPNG/JPG（SVGは不可）。このサイトの /notify-icon.png も使えます。",
+      "env_variable": "DISCORD_WEBHOOK_AVATAR",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string|max:300",
+      "field_type": "text"
+    },
+    {
       "name": "BOT中継URL（任意）",
       "description": "BOT（Lumiなど）側に作った受け口のURL。BOTのトークンを渡さずに通知できます。設定すると最優先。docs/lumi-relay-snippet.js 参照。",
       "env_variable": "LUMI_RELAY_URL",

@@ -15,6 +15,8 @@ const GOOGLE_MAPS_KEY = (process.env.GOOGLE_MAPS_KEY || '').trim();   // 設定�
 const WEBHOOK_URL = (process.env.DISCORD_WEBHOOK_URL || '').trim();   // 設定すると、お店が追加されたときにそのチャンネルへ通知
 const PLACES_KEY = (process.env.GOOGLE_PLACES_KEY || '').trim();        // サーバー用キー（Places API (New)）。設定すると営業時間・電話をGoogleから取得
 const PLACES_ENDPOINT = process.env.GOOGLE_PLACES_ENDPOINT || 'https://places.googleapis.com/v1/places:searchText';
+const WEBHOOK_NAME = (process.env.DISCORD_WEBHOOK_NAME || 'ご当地めし帖').trim().slice(0, 80);   // Webhook通知の表示名（例: Lumi）
+const WEBHOOK_AVATAR = (process.env.DISCORD_WEBHOOK_AVATAR || '').trim();                       // Webhook通知のアイコン画像URL（PNG/JPG, https）
 const RELAY_URL = (process.env.LUMI_RELAY_URL || '').trim();           // Lumi等のBOT側の受け口（トークンを渡さずに通知。最優先）
 const RELAY_SECRET = (process.env.LUMI_RELAY_SECRET || '').trim();
 const BOT_TOKEN = (process.env.DISCORD_BOT_TOKEN || '').trim();         // BOT経由で通知する場合（Webhookより優先）
@@ -268,7 +270,7 @@ async function notifyDiscord(spot) {
     const url = botOk ? `${DISCORD_API}/channels/${NOTIFY_CHANNEL_ID}/messages` : WEBHOOK_URL;
     const headers = { 'Content-Type': 'application/json' };
     if (botOk) headers.Authorization = 'Bot ' + BOT_TOKEN;
-    const payload = botOk ? { embeds: [embed], allowed_mentions: { parse: [] } } : { username: 'ご当地めし帖', embeds: [embed], allowed_mentions: { parse: [] } };
+    const payload = botOk ? { embeds: [embed], allowed_mentions: { parse: [] } } : { username: WEBHOOK_NAME, ...(/^https:\/\//.test(WEBHOOK_AVATAR) ? { avatar_url: WEBHOOK_AVATAR } : {}), embeds: [embed], allowed_mentions: { parse: [] } };
     const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(8000) });
     if (!r.ok) console.warn('Discord通知に失敗:', r.status, botOk ? '（BOTにチャンネルの「メッセージを送信」「埋め込みリンク」権限があるか確認）' : '');
   } catch (e) { console.warn('Discord通知に失敗:', e.message); }

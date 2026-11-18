@@ -63,7 +63,7 @@ function renderUser(){
 }
 
 function renderFilters(){
-  $("regions").innerHTML = Object.keys(REGIONS).map(r => `<button class="chip" data-region="${esc(r)}" aria-pressed="${S.region===r}">${esc(r)}</button>`).join("");
+  $("regions").innerHTML = `<button class="chip" data-region="" aria-pressed="${!S.region && !S.pref}">全国<span class="n">${S.spots.length}</span></button>` + Object.keys(REGIONS).map(r => `<button class="chip" data-region="${esc(r)}" aria-pressed="${S.region===r}">${esc(r)}</button>`).join("");
   const list = S.region ? REGIONS[S.region] : Object.values(REGIONS).flat();
   $("prefHead").textContent = S.region ? `都道府県（${S.region}）` : "都道府県（全国）";
   const counts = {}; S.spots.forEach(s => counts[s.pref] = (counts[s.pref]||0)+1);

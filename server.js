@@ -279,7 +279,7 @@ async function lumiSetting(key, def) {
   if (!lumi.enabled()) return def;
   if (Date.now() - lumiSettings.t > 60000) {
     const r = await lumi.call('GET', '/internal/settings');
-    lumiSettings = { t: Date.now(), v: r.ok && r.data ? (r.data.settings || r.data.values || r.data) : {} };
+    lumiSettings = { t: Date.now(), v: r.ok && r.data ? (r.data.values || r.data.settings || r.data) : {} };
   }
   const v = lumiSettings.v[key];
   return v === undefined || v === null ? def : v;

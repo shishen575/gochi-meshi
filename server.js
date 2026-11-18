@@ -2,6 +2,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const { guessGenre } = require('./public/genre.js');
+const { createLumi } = require('./lib/lumi');
 const { addressVariants, parseGmapsUrl, parseAddress, pickCity, isAllowedHost } = require('./lib/gmaps');
 const fs = require('fs');
 const path = require('path');
@@ -13,6 +14,8 @@ const CLIENT_ID = process.env.DISCORD_CLIENT_ID || '';
 const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
 const GUILD_ID = process.env.DISCORD_GUILD_ID || '';          // 空なら Discord ログインできる人なら誰でも投稿可
 const GOOGLE_MAPS_KEY = (process.env.GOOGLE_MAPS_KEY || '').trim();   // 設定するとGoogleマップで表示（未設定ならOpenStreetMap）
+const LUMI_URL = (process.env.LUMI_URL || '').trim();                       // 連携するLumiのアドレス（例: https://lumi.shishen575.net）
+const LUMI_CONNECT_TOKEN = (process.env.LUMI_CONNECT_TOKEN || '').trim();   // /integration create で発行した接続用トークン（初回だけ・15分で失効）
 const WEBHOOK_URL = (process.env.DISCORD_WEBHOOK_URL || '').trim();   // 設定すると、お店が追加されたときにそのチャンネルへ通知
 const PLACES_KEY = (process.env.GOOGLE_PLACES_KEY || '').trim();        // サーバー用キー（Places API (New)）。設定すると営業時間・電話をGoogleから取得
 const PLACES_ENDPOINT = process.env.GOOGLE_PLACES_ENDPOINT || 'https://places.googleapis.com/v1/places:searchText';
@@ -32,7 +35,7 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 
 /* ---------- 保存（JSONファイル、原子的に書き込み） ---------- */
 const DB_FILE = path.join(DATA_DIR, 'db.json');
-let db = { spots: [], votes: {}, reviews: {}, favs: {} }; // favs: { userId: [spotId,...] } / votes: { spotId: [userId,...] } / reviews: { spotId: [{id,userId,name,avatar,rating,text,createdAt}] }
+let db = { spots: [], votes: {}, reviews: {}, favs: {}, granted: {} }; // favs: { userId: [spotId,...] } / votes: { spotId: [userId,...] } / reviews: { spotId: [{id,userId,name,avatar,rating,text,createdAt}] }
 try { db = { ...db, ...JSON.parse(fs.readFileSync(DB_FILE, 'utf8')) }; } catch (e) {}
 let saveTimer = null;
 function save() {
@@ -248,19 +251,72 @@ if ((BOT_TOKEN || NOTIFY_CHANNEL_ID) && !botOk) console.warn('警告: DISCORD_BO
 const relayOk = /^https:\/\//.test(RELAY_URL) || /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(RELAY_URL);
 if ((RELAY_URL || RELAY_SECRET) && !(relayOk && RELAY_SECRET.length >= 16)) console.warn('警告: LUMI_RELAY_URL（https）と LUMI_RELAY_SECRET（16文字以上）を両方設定してください。中継通知は無効です');
 const relayReady = relayOk && RELAY_SECRET.length >= 16;
-async function notifyDiscord(spot) {
-  if (!relayReady && !botOk && !hookOk) return;
-  const fields = [{ name: '場所', value: mdEsc(`${spot.pref} ${spot.city}`), inline: true }, { name: 'ジャンル', value: mdEsc(spot.genre), inline: true }];
-  if (spot.price) fields.push({ name: '予算', value: mdEsc(spot.price), inline: true });
-  const gmap = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(`${spot.name} ${spot.pref}${spot.city}`);
-  fields.push({ name: 'Googleマップ', value: `[地図で開く](${gmap})` });
-  const embed = {
-    title: mdEsc(spot.name).slice(0, 250), url: `${PUBLIC_URL}/?s=${spot.id}`, color: 0x1c6b57,
-    description: mdEsc(spot.comment).slice(0, 1000), fields,
-    author: { name: `${mdEsc(spot.authorName).slice(0, 60)} さんの新しいおすすめ` }, timestamp: new Date(spot.createdAt).toISOString()
-  };
-  if (/^https:\/\/cdn\.discordapp\.com\//.test(spot.authorAvatar || '')) embed.author.icon_url = spot.authorAvatar;
+/* ---------- Lumi連携（通知・メンバー確認・ランク・ロール付与） ---------- */
+const LUMI_MANIFEST = {
+  name: 'ご当地めし帖', description: '都道府県・市区町村ごとのおすすめ飯を共有するサイト',
+  capabilities: ['notify', 'members', 'rank', 'grant'],
+  settings: [
+    { key: 'min_posts', type: 'number', label: 'ロールを付与する投稿数', help: 'この件数のお店を投稿した人に、選んだロールを付けます。0で付与しません。' },
+    { key: 'members_only', type: 'toggle', label: '投稿・いいね・口コミをサーバーのメンバーに限定', help: 'オンにすると、このサーバーのメンバーだけが書き込めます。' },
+    { key: 'show_rank', type: 'toggle', label: '投稿者名の横に活動ランクを表示', help: 'Lumiの活動ランク（ロール名）を、お店のカードに表示します。' },
+    { key: 'notify_reviews', type: 'toggle', label: '口コミも通知する', help: 'オフのときは、新しいお店の追加だけを通知します。' }
+  ]
+};
+const lumi = createLumi({ baseUrl: LUMI_URL, dataDir: DATA_DIR, connectToken: LUMI_CONNECT_TOKEN, manifest: LUMI_MANIFEST });
+const toBool = v => v === true || v === 'true' || v === 1 || v === '1';
+const toNum = v => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+let lumiSettings = { t: 0, v: {} };
+async function lumiSetting(key, def) {
+  if (!lumi.enabled()) return def;
+  if (Date.now() - lumiSettings.t > 60000) {
+    const r = await lumi.call('GET', '/internal/settings');
+    lumiSettings = { t: Date.now(), v: r.ok && r.data ? (r.data.settings || r.data.values || r.data) : {} };
+  }
+  const v = lumiSettings.v[key];
+  return v === undefined || v === null ? def : v;
+}
+// メンバー確認: true/false、確認できないとき（未設定・Lumi停止中など）は null
+const memberCache = new Map();
+async function lumiMember(uid) {
+  if (!lumi.enabled()) return null;
+  const c = memberCache.get(uid);
+  if (c && Date.now() - c.t < 300000) return c.v;
+  const r = await lumi.call('GET', '/internal/members/' + encodeURIComponent(uid));
+  const v = r.status === 404 ? false : r.ok && r.data ? !!r.data.member : null;
+  if (v !== null) memberCache.set(uid, { t: Date.now(), v });
+  return v;
+}
+// 活動ランク: キャッシュを返し、古い・無いものは裏で取得（初回は表示されず、次の更新から出る）
+const rankCache = new Map(); const rankLoading = new Set();
+function rankOf(uid) {
+  const c = rankCache.get(uid);
+  if ((!c || Date.now() - c.t > 600000) && !rankLoading.has(uid) && rankLoading.size < 5) {
+    rankLoading.add(uid);
+    lumi.call('GET', '/internal/users/' + encodeURIComponent(uid) + '/rank')
+      .then(r => rankCache.set(uid, { t: Date.now(), v: r.ok && r.data && r.data.rankRole ? String(r.data.rankRole).slice(0, 30) : '' }))
+      .finally(() => rankLoading.delete(uid));
+  }
+  return c ? c.v : '';
+}
+async function maybeGrant(userId) {
+  if (!lumi.enabled() || db.granted[userId]) return;
+  const min = toNum(await lumiSetting('min_posts', 0));
+  if (min < 1) return;
+  const n = db.spots.filter(x => x.authorId === userId).length;
+  if (n < min) return;
+  const r = await lumi.call('POST', '/internal/roles/grant', { userId, reason: `ご当地めし帖で${n}件投稿` });
+  if (r.ok) { db.granted[userId] = Date.now(); save(); }
+}
+
+/* ---------- 通知の送り先（Lumi連携 → 中継 → BOT直接 → Webhook の順） ---------- */
+const anySink = () => lumi.enabled() || relayReady || botOk || hookOk;
+async function sendEmbed(embed) {
   try {
+    if (lumi.enabled()) {
+      const r = await lumi.call('POST', '/internal/meshi-notify', { embed });
+      if (r.ok) return;
+      if (!(relayReady || botOk || hookOk)) { if (!r.blocked) console.warn('Lumi通知に失敗:', r.status, r.status === 403 ? '（Lumiのダッシュボードで通知をオンにし、チャンネルを選んでください）' : ''); return; }
+    }
     if (relayReady) {
       // BOT側に渡すのは署名つきの埋め込みだけ。宛先チャンネルはBOT側で固定されているので、トークンもチャンネルIDも持たない
       const body = JSON.stringify({ embed });
@@ -270,6 +326,7 @@ async function notifyDiscord(spot) {
       if (!r.ok) console.warn('中継通知に失敗:', r.status);
       return;
     }
+    if (!botOk && !hookOk) return;
     const url = botOk ? `${DISCORD_API}/channels/${NOTIFY_CHANNEL_ID}/messages` : WEBHOOK_URL;
     const headers = { 'Content-Type': 'application/json' };
     if (botOk) headers.Authorization = 'Bot ' + BOT_TOKEN;
@@ -277,6 +334,31 @@ async function notifyDiscord(spot) {
     const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(8000) });
     if (!r.ok) console.warn('Discord通知に失敗:', r.status, botOk ? '（BOTにチャンネルの「メッセージを送信」「埋め込みリンク」権限があるか確認）' : '');
   } catch (e) { console.warn('Discord通知に失敗:', e.message); }
+}
+const avatarOk = u => /^https:\/\/cdn\.discordapp\.com\//.test(u || '');
+async function notifyDiscord(spot) {
+  if (!anySink()) return;
+  const fields = [{ name: '場所', value: mdEsc(`${spot.pref} ${spot.city}`), inline: true }, { name: 'ジャンル', value: mdEsc(spot.genre), inline: true }];
+  if (spot.price) fields.push({ name: '予算', value: mdEsc(spot.price), inline: true });
+  const gmap = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(`${spot.name} ${spot.pref}${spot.city}`);
+  fields.push({ name: 'Googleマップ', value: `[地図で開く](${gmap})` });
+  const embed = {
+    title: mdEsc(spot.name).slice(0, 250), url: `${PUBLIC_URL}/?s=${spot.id}`, color: 0x1c6b57,
+    description: mdEsc(spot.comment).slice(0, 1000), fields,
+    author: { name: `${mdEsc(spot.authorName).slice(0, 60)} さんの新しいおすすめ` }, timestamp: new Date(spot.createdAt).toISOString()
+  };
+  if (avatarOk(spot.authorAvatar)) embed.author.icon_url = spot.authorAvatar;
+  await sendEmbed(embed);
+}
+async function notifyReview(spot, review) {
+  if (!anySink() || !toBool(await lumiSetting('notify_reviews', false))) return;
+  const embed = {
+    title: mdEsc(spot.name).slice(0, 250), url: `${PUBLIC_URL}/?s=${spot.id}`, color: 0xc8541f,
+    description: ('★'.repeat(review.rating) + '☆'.repeat(5 - review.rating) + (review.text ? '\n' + mdEsc(review.text) : '')).slice(0, 1000),
+    author: { name: `${mdEsc(review.name).slice(0, 60)} さんの口コミ` }, timestamp: new Date(review.createdAt).toISOString()
+  };
+  if (avatarOk(review.avatar)) embed.author.icon_url = review.avatar;
+  await sendEmbed(embed);
 }
 
 /* ---------- API ---------- */
@@ -287,9 +369,11 @@ const PRICES = ["", "〜1,000円","〜2,000円","〜3,000円","3,000円〜"];
 let CITIES = {};
 try { CITIES = JSON.parse(fs.readFileSync(path.join(__dirname, 'public', 'cities.json'), 'utf8')); } catch (e) { console.warn('cities.json を読み込めませんでした（市区町村の検証を省略します）'); }
 
-const need = (req, res, next) => {
+// Lumiの設定「メンバーに限定」がオンなら、書き込みのたびにLumiでメンバーか確認する（管理者は除く）
+const lumiBlocks = async u => !u.admin && lumi.enabled() && toBool(await lumiSetting('members_only', false)) && (await lumiMember(u.id)) === false;
+const need = async (req, res, next) => {
   if (!req.user) return res.status(401).json({ error: 'ログインが必要です' });
-  if (!req.user.member) return res.status(403).json({ error: 'このサーバーのメンバーのみ利用できます' });
+  if (!req.user.member || await lumiBlocks(req.user)) return res.status(403).json({ error: 'このサーバーのメンバーのみ利用できます' });
   next();
 };
 const needJson = (req, res, next) => (req.is('application/json') ? next() : res.status(415).json({ error: 'JSONで送信してください' }));
@@ -308,19 +392,21 @@ setInterval(() => hits.clear(), 3600e3).unref();
 // 公開してよい設定（Googleマップのキーはリファラ制限をかけて公開する前提のもの）
 app.get('/api/config', (req, res) => res.json({ googleMapsKey: GOOGLE_MAPS_KEY || null }));
 
-app.get('/api/me', (req, res) => {
+app.get('/api/me', async (req, res) => {
   const u = req.user;
-  res.json({ loggedIn: !!u, user: u ? { id: u.id, name: u.name, avatar: u.avatar, member: u.member, admin: u.admin } : null, guildRestricted: !!GUILD_ID });
+  const member = u ? u.member && !(await lumiBlocks(u)) : false;
+  res.json({ loggedIn: !!u, user: u ? { id: u.id, name: u.name, avatar: u.avatar, member, admin: u.admin } : null, guildRestricted: !!GUILD_ID });
 });
 
-app.get('/api/spots', (req, res) => {
+app.get('/api/spots', async (req, res) => {
   const uid = req.user && req.user.id;
   const myFavs = new Set((uid && db.favs[uid]) || []);
+  const showRank = lumi.enabled() && toBool(await lumiSetting('show_rank', false));
   res.json(db.spots.map(s => {
     const v = db.votes[s.id] || [];
     const rv = db.reviews[s.id] || [];
     const avg = rv.length ? Math.round(rv.reduce((a, r) => a + r.rating, 0) / rv.length * 10) / 10 : 0;
-    return { ...s, likes: v.length, liked: !!uid && v.includes(uid), fav: !!uid && myFavs.has(s.id), ratingAvg: avg, ratingCount: rv.length };
+    return { ...s, likes: v.length, liked: !!uid && v.includes(uid), fav: !!uid && myFavs.has(s.id), ratingAvg: avg, ratingCount: rv.length, ...(showRank ? { authorRank: rankOf(s.authorId) } : {}) };
   }));
 });
 
@@ -346,7 +432,7 @@ app.post('/api/spots', needJson, need, limit(10, 3600e3), (req, res) => {
   const lat = Number(b.lat), lng = Number(b.lng);
   if (b.lat != null && b.lng != null && inJapan(lat, lng)) { spot.lat = +lat.toFixed(6); spot.lng = +lng.toFixed(6); spot.geo = 'user'; }
   db.spots.push(spot); save();
-  notifyDiscord(spot);
+  notifyDiscord(spot).then(() => maybeGrant(req.user.id)).catch(() => {});
   res.status(201).json({ ...spot, likes: 0, liked: false });
   if (spot.lat == null) {
     locateSpot(spot).then(g => { if (g) { spot.lat = g.lat; spot.lng = g.lng; spot.geo = g.geo; spot.v = 2; save(); } });
@@ -512,6 +598,8 @@ app.post('/api/spots/:id/reviews', needJson, need, limit(20, 3600e3), (req, res)
   if (mine) Object.assign(mine, base); else list.push({ id: crypto.randomBytes(6).toString('hex'), ...base });
   save();
   res.status(201).json({ ok: true });
+  const spotOfReview = db.spots.find(x => x.id === id), rv = list.find(r => r.userId === req.user.id);
+  if (spotOfReview && rv) notifyReview(spotOfReview, rv).catch(() => {});
 });
 app.delete('/api/spots/:id/reviews/:rid', need, (req, res) => {
   const list = db.reviews[req.params.id] || [];
@@ -561,6 +649,8 @@ app.use((req, res) => res.status(404).send('Not found'));
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`ご当地めし帖 起動: ポート ${PORT} / 公開URL ${PUBLIC_URL}`);
   console.log(`Discord リダイレクトURI: ${REDIRECT_URI}`);
+  lumi.register();
+  console.log('Lumi連携: ' + (lumi.enabled() ? '有効' : LUMI_URL ? '未登録（LUMI_CONNECT_TOKEN で初回登録）' : '無効'));
   console.log('Discord通知: ' + (relayReady ? '有効（BOT中継）' : botOk ? '有効（BOT経由）' : hookOk ? '有効（Webhook）' : '無効（DISCORD_CHANNEL_ID+DISCORD_BOT_TOKEN か DISCORD_WEBHOOK_URL を設定）'));
   if (!CLIENT_ID || !CLIENT_SECRET) console.warn('警告: DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET が未設定です（ログイン不可）');
 });

@@ -151,7 +151,7 @@ function renderFeed(){
         <button class="btn small" data-rv="${esc(s.id)}" aria-expanded="${isOpen}" type="button">口コミ${s.ratingCount?`（${s.ratingCount}）`:""}を${isOpen?"閉じる":"見る・書く"}</button></div>
       ${S.locEdit===s.id?`<div class="locedit"><p class="msg">地図をクリックして、店の場所にピンを動かしてください。</p><div id="loc-map" class="map mini"></div><div class="actions"><button class="btn primary small" data-locsave="${esc(s.id)}" type="button">この位置で保存</button><span class="msg" id="loc-msg"></span></div></div>`:""}
       ${isOpen?`<div class="reviews">${reviewPanel(s)}</div>`:""}
-      <div class="card-foot"><span>紹介：${esc(s.authorName)}</span>
+      <div class="card-foot"><span>紹介：${esc(s.authorName)}${s.authorRank?` <span class="tag">${esc(s.authorRank)}</span>`:""}</span>
         <span class="acts">
         ${(uid && s.authorId===uid)||admin?`<button class="btn small" data-del="${esc(s.id)}" type="button">削除</button>`:""}</span></div>
     </article>`;

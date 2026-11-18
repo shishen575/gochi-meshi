@@ -140,6 +140,26 @@
       "field_type": "text"
     },
     {
+      "name": "LumiのURL（任意）",
+      "description": "連携するLumiのアドレス（例: https://lumi.shishen575.net）。トークンを渡さずに、通知・メンバー確認・活動ランク・ロール付与を使えます。設定すると通知はLumi経由が最優先。",
+      "env_variable": "LUMI_URL",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string|max:200",
+      "field_type": "text"
+    },
+    {
+      "name": "Lumi接続用トークン（初回のみ）",
+      "description": "Lumiの /integration create で発行したトークン（1回だけ表示・15分で失効）。初回起動時に登録され、以後は不要です。",
+      "env_variable": "LUMI_CONNECT_TOKEN",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string|max:300",
+      "field_type": "text"
+    },
+    {
       "name": "BOT中継URL（任意）",
       "description": "BOT（Lumiなど）側に作った受け口のURL。BOTのトークンを渡さずに通知できます。設定すると最優先。docs/lumi-relay-snippet.js 参照。",
       "env_variable": "LUMI_RELAY_URL",

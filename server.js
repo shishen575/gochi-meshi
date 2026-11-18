@@ -13,6 +13,8 @@ const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
 const GUILD_ID = process.env.DISCORD_GUILD_ID || '';          // 空なら Discord ログインできる人なら誰でも投稿可
 const GOOGLE_MAPS_KEY = (process.env.GOOGLE_MAPS_KEY || '').trim();   // 設定するとGoogleマップで表示（未設定ならOpenStreetMap）
 const WEBHOOK_URL = (process.env.DISCORD_WEBHOOK_URL || '').trim();   // 設定すると、お店が追加されたときにそのチャンネルへ通知
+const PLACES_KEY = (process.env.GOOGLE_PLACES_KEY || '').trim();        // サーバー用キー（Places API (New)）。設定すると営業時間・電話をGoogleから取得
+const PLACES_ENDPOINT = process.env.GOOGLE_PLACES_ENDPOINT || 'https://places.googleapis.com/v1/places:searchText';
 const ADMIN_IDS = (process.env.ADMIN_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
 const SECURE = PUBLIC_URL.startsWith('https://');
@@ -159,6 +161,9 @@ function reverseGeocode(lat, lng) {
   geoChain = job.catch(() => {});
   return job;
 }
+// OSMの opening_hours（例: "Mo-Fr 11:00-21:00; Sa,Su 11:00-20:00; PH off"）を読みやすい日本語に
+const DAYS = { Mo: '月', Tu: '火', We: '水', Th: '木', Fr: '金', Sa: '土', Su: '日', PH: '祝' };
+const jaHours = raw => String(raw || '').replace(/\b(Mo|Tu|We|Th|Fr|Sa|Su|PH)\b/g, d => DAYS[d]).replace(/\boff\b/g, '休み').split(/\s*;\s*/).filter(Boolean).join('\n').slice(0, 400);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function queue(fn) {
   const job = geoChain.then(async () => { const r = await fn(); await sleep(1100); return r; });
@@ -195,6 +200,33 @@ async function locateIn(pref, city, queries) {
   return { lat: area.lat, lng: area.lng, geo: 'city' };
 }
 const locateSpot = sp => locateIn(sp.pref, sp.city, [`${sp.name} ${sp.city}`, sp.name]);
+// 営業時間などの自動取得: Google Places（キーがある場合）→ OpenStreetMap の順
+async function placeInfo(name, pref, city) {
+  if (PLACES_KEY) {
+    try {
+      const r = await fetch(PLACES_ENDPOINT, {
+        method: 'POST', signal: AbortSignal.timeout(8000),
+        headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': PLACES_KEY,
+          'X-Goog-FieldMask': 'places.displayName,places.formattedAddress,places.regularOpeningHours.weekdayDescriptions,places.nationalPhoneNumber' },
+        body: JSON.stringify({ textQuery: `${name} ${pref}${city}`, languageCode: 'ja', regionCode: 'JP', maxResultCount: 1 })
+      });
+      const j = r.ok ? await r.json() : null;
+      const pl = j && j.places && j.places[0];
+      if (pl && String(pl.formattedAddress || '').includes(pref)) {   // 別の地域の同名店は採用しない
+        const hours = ((pl.regularOpeningHours || {}).weekdayDescriptions || []).join('\n').slice(0, 400);
+        const phone = String(pl.nationalPhoneNumber || '').replace(/[^0-9+\-()\s]/g, '').slice(0, 30);
+        if (hours || phone) return { hours, phone, source: 'google' };
+      } else if (!r.ok) console.warn('Places API エラー:', r.status);
+    } catch (e) { console.warn('Places API 失敗:', e.message); }
+  }
+  const area = await cityArea(pref, city);
+  if (!area) return null;
+  const pad = 0.005;
+  const hit = await searchRaw({ q: `${name} ${city}`, extratags: '1', viewbox: `${area.west - pad},${area.north + pad},${area.east + pad},${area.south - pad}`, bounded: '1' });
+  const t = (hit && hit.extratags) || {};
+  const hours = jaHours(t.opening_hours), phone = String(t.phone || t['contact:phone'] || '').replace(/[^0-9+\-()\s]/g, '').slice(0, 30);
+  return hours || phone ? { hours, phone, source: 'osm' } : null;
+}
 const spotQueries = s => [`${s.name} ${s.pref}${s.city}`, `${s.pref}${s.city}`];
 
 /* ---------- Discord への新着通知（Webhook） ---------- */
@@ -273,6 +305,8 @@ app.post('/api/spots', needJson, need, limit(10, 3600e3), (req, res) => {
     id: crypto.randomBytes(8).toString('hex'),
     name: clean(b.name, 60), pref: clean(b.pref, 10), city: clean(b.city, 30),
     genre: clean(b.genre, 20), price: clean(b.price, 12),
+    hours: String(b.hours ?? '').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').trim().slice(0, 400),
+    phone: /^[0-9+\-()\s]{0,30}$/.test(String(b.phone ?? '').trim()) ? String(b.phone ?? '').trim() : '',
     comment: String(b.comment ?? '').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').trim().slice(0, 400),
     authorId: req.user.id, authorName: req.user.name, authorAvatar: req.user.avatar, createdAt: Date.now()
   };
@@ -309,6 +343,14 @@ async function resolveGmapsUrl(input) {
   }
   return null;
 }
+app.get('/api/place-info', need, limit(30, 600e3), async (req, res) => {
+  const name = clean(req.query.name, 60), pref = clean(req.query.pref, 10), city = clean(req.query.city, 30);
+  if (!name || !PREFS.includes(pref) || !city) return res.status(400).json({ error: '店名・都道府県・市区町村を入力してください' });
+  const info = await placeInfo(name, pref, city);
+  if (!info) return res.status(404).json({ error: '営業時間の情報が見つかりませんでした。手入力してください。' });
+  res.json(info);
+});
+
 app.get('/api/gmaps', need, limit(15, 600e3), async (req, res) => {
   const found = await resolveGmapsUrl(clean(req.query.url, 600));
   if (!found) return res.status(400).json({ error: 'Googleマップのリンクを読み取れませんでした。共有ボタンでコピーしたリンクを貼ってください。' });

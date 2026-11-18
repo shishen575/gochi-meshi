@@ -142,6 +142,7 @@ function renderFeed(){
         <button class="btn small like" data-like="${esc(s.id)}" aria-pressed="${s.liked}" ${canPost()?"":"disabled"} aria-label="いいね">♥ <span class="c">${s.likes}</span></button></span></div>
       <div class="tags"><span class="tag">${esc(s.genre)}</span>${s.price?`<span class="tag price">${esc(s.price)}</span>`:""}</div>
       <p class="comment">${esc(s.comment)}</p>
+      ${s.hours||s.phone?`<details class="hours"><summary>営業時間・電話</summary>${s.hours?`<div class="hrs">${esc(s.hours)}</div>`:""}${s.phone?`<div class="hrs">☎ ${esc(s.phone)}</div>`:""}<div class="msg">変わることがあります。お出かけ前にGoogleマップで確認してください。</div></details>`:""}
       ${s.ratingCount?`<div class="rate" title="口コミ平均">${stars(s.ratingAvg)} <b>${s.ratingAvg.toFixed(1)}</b> <span class="place">（口コミ${s.ratingCount}件）</span></div>`:""}
       <div class="links"><a class="btn small" href="${map}" target="_blank" rel="noopener noreferrer">Googleマップで開く</a>
         <a class="btn small" href="${route}" target="_blank" rel="noopener noreferrer">ルート案内</a>
@@ -269,6 +270,10 @@ function openForm(){
       <div class="field"><label for="f-city">市区町村（必須）</label><select class="input" id="f-city" required></select></div>
       <div class="field"><label for="f-price">予算</label><select class="input" id="f-price"><option value="">指定なし</option>${PRICES.map(p=>`<option>${p}</option>`).join("")}</select></div>
     </div>
+    <div class="field"><label for="f-hours">営業時間・電話（任意）：変わることがあるので、お出かけ前にGoogleマップで確認してもらえます</label>
+      <div class="actions"><button class="btn small" id="f-hoursgo" type="button">営業時間を自動入力</button><span class="msg" id="f-hmsg"></span></div>
+      <textarea class="input" id="f-hours" maxlength="400" style="min-height:72px" placeholder="例：月〜金 11:00-21:00 / 土日 11:00-20:00 / 水曜定休"></textarea>
+      <input class="input" id="f-phone" type="tel" maxlength="30" placeholder="電話番号（任意）" aria-label="電話番号"></div>
     <div class="field"><label>場所（任意）：地図をクリックしてピンを置けます。置かない場合は店名と地域から自動で探します。</label>
       <div class="actions"><button class="btn small" id="f-find" type="button">店名と地域から場所を検索</button><span class="msg" id="f-geomsg"></span></div>
       <div id="f-map" class="map mini"></div></div>
@@ -317,16 +322,30 @@ function openForm(){
       m.textContent = g.city ? "入力しました。内容を確認して投稿してください。" : "場所は入力しました。市区町村は候補から選んでください。";
       if (g.approx) m.textContent += "（位置は市区町村の中心です。地図をクリックして店の場所に直せます）";
       if (!g.name) m.textContent += "（店名は手入力してください）";
+      autoHours(true);
     } catch (err) { m.className = "msg err"; m.textContent = err.message; }
     $("f-gmgo").disabled = false;
   };
+  const autoHours = async (quiet) => {
+    const m = $("f-hmsg"), name = $("f-name").value.trim(), pref = $("f-pref").value, city = $("f-city").value;
+    if (!name || !pref || !city) { if (!quiet) { m.className = "msg err"; m.textContent = "店名・都道府県・市区町村を先に入力してください"; } return; }
+    m.className = "msg"; m.textContent = "探しています…"; $("f-hoursgo").disabled = true;
+    try {
+      const r = await api(`/api/place-info?name=${encodeURIComponent(name)}&pref=${encodeURIComponent(pref)}&city=${encodeURIComponent(city)}`);
+      if (r.hours && !$("f-hours").value.trim()) $("f-hours").value = r.hours;
+      if (r.phone && !$("f-phone").value.trim()) $("f-phone").value = r.phone;
+      m.textContent = (r.source === "google" ? "Googleの情報を入れました。" : "OpenStreetMapの情報を入れました。") + "内容を確認してください。";
+    } catch (err) { m.className = "msg"; m.textContent = quiet ? "" : err.message; }
+    $("f-hoursgo").disabled = false;
+  };
+  $("f-hoursgo").onclick = () => autoHours(false);
   $("cancel").onclick = closeForm;
   $("form").addEventListener("submit", async e => {
     e.preventDefault();
     const btn = e.submitter; if (btn) btn.disabled = true;
     const pc = $("f-pref").value, cc = $("f-city").value.trim();
     if (S.cities[pc] && !S.cities[pc].includes(cc)) { if (btn) btn.disabled = false; const m=$("fmsg"); m.className="msg err"; m.textContent="市区町村は候補から選んでください（例：札幌市中央区）"; return; }
-    const data = { name:$("f-name").value, genre:$("f-genre").value, pref:$("f-pref").value, city:$("f-city").value, price:$("f-price").value, comment:$("f-comment").value };
+    const data = { name:$("f-name").value, genre:$("f-genre").value, pref:$("f-pref").value, city:$("f-city").value, price:$("f-price").value, comment:$("f-comment").value, hours:$("f-hours").value, phone:$("f-phone").value };
     if (pos) { data.lat = pos.lat; data.lng = pos.lng; }
     try {
       const spot = await api("/api/spots", { method:"POST", body:JSON.stringify(data) });

@@ -67,6 +67,8 @@ egg = {
             "GOOGLE_MAPS_KEY", "", "nullable|string|max:100"),
         var("Discord Webhook URL（任意）", "お店が追加されたとき、このWebhookのチャンネルに通知します。Discordのチャンネル設定 > 連携サービス > ウェブフック で作成。空なら通知しません。",
             "DISCORD_WEBHOOK_URL", "", "nullable|string|max:300"),
+        var("Google Places APIキー（任意・サーバー用）", "設定すると、営業時間と電話番号をGoogleから自動入力できます。Places API (New) を有効にしたサーバー用のキーで、ブラウザ用のキーとは別にしてください。空ならOpenStreetMapの情報だけを使います（載っていない店も多い）。",
+            "GOOGLE_PLACES_KEY", "", "nullable|string|max:100"),
         var("Discord Client ID", "Discord Developer Portal の OAuth2 > Client ID",
             "DISCORD_CLIENT_ID", "", "required|string|max:40"),
         var("Discord Client Secret", "Discord Developer Portal の OAuth2 > Client Secret",

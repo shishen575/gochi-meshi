@@ -22,7 +22,11 @@ Google Cloud で「Maps JavaScript API」を有効にし、APIキーを作成（
 パネルの変数 `GOOGLE_MAPS_KEY` に入れて再起動すると、地図がGoogleマップになります。
 投稿のたびにピンが自動で増え、開いたままの画面も30秒ごとに更新されます。未設定ならOpenStreetMapです。
 
-## Discord通知の送り方（優先順）
-1. **BOT中継**（`LUMI_RELAY_URL` + `LUMI_RELAY_SECRET`）: BOTのトークンを渡さずに通知。BOT側に `docs/lumi-relay-snippet.js` を組み込む。
-2. **BOT直接**（`DISCORD_BOT_TOKEN` + `DISCORD_CHANNEL_ID`）
-3. **Webhook**（`DISCORD_WEBHOOK_URL`）
+## Discord通知・メンバー確認など（Lumi連携）
+パネルの変数 `LUMI_URL` と `LUMI_CONNECT_TOKEN`（Lumiの `/integration create` で発行）を入れて起動すると、Lumiに登録されます。
+通知・メンバー限定・活動ランク表示・投稿数でのロール付与は、Lumiのダッシュボードで設定します。
+
+Eggの画面に出る変数は8個だけです。Google APIキーと自動更新の設定は「詳細設定」として隠してあります
+（パネル管理画面のサーバーの Startup で表示・変更できます）。
+Lumiを使わない場合の通知用に、サーバーは環境変数 `DISCORD_WEBHOOK_URL`（Webhook）、`DISCORD_BOT_TOKEN` + `DISCORD_CHANNEL_ID`、
+`LUMI_RELAY_URL` + `LUMI_RELAY_SECRET` にも対応しています（Eggには出していません）。

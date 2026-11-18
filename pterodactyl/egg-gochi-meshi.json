@@ -50,156 +50,6 @@
       "field_type": "text"
     },
     {
-      "name": "自動更新",
-      "description": "1 なら GitHub の最新コードを起動時と定期的に取り込み、変更があれば自動で再起動します。0 で無効。",
-      "env_variable": "AUTO_UPDATE",
-      "default_value": "1",
-      "user_viewable": true,
-      "user_editable": true,
-      "rules": "required|in:0,1",
-      "field_type": "text"
-    },
-    {
-      "name": "GitHubリポジトリURL",
-      "description": "自動更新で取り込むリポジトリ（公開リポジトリ）。",
-      "env_variable": "GIT_REPO",
-      "default_value": "https://github.com/shishen575/gochi-meshi.git",
-      "user_viewable": true,
-      "user_editable": true,
-      "rules": "required|string|max:200",
-      "field_type": "text"
-    },
-    {
-      "name": "ブランチ",
-      "description": "自動更新で追従するブランチ。",
-      "env_variable": "GIT_BRANCH",
-      "default_value": "main",
-      "user_viewable": true,
-      "user_editable": true,
-      "rules": "required|string|max:60",
-      "field_type": "text"
-    },
-    {
-      "name": "更新確認の間隔（分）",
-      "description": "何分ごとに更新を確認するか。1〜1440。",
-      "env_variable": "UPDATE_INTERVAL",
-      "default_value": "5",
-      "user_viewable": true,
-      "user_editable": true,
-      "rules": "required|integer|min:1|max:1440",
-      "field_type": "text"
-    },
-    {
-      "name": "Google Maps APIキー（任意）",
-      "description": "設定すると地図がGoogleマップになり、投稿のたびに自動でピンが増えます。Google Cloud で Maps JavaScript API を有効にし、キーのHTTPリファラ制限に公開URLを登録してください。空ならOpenStreetMap。",
-      "env_variable": "GOOGLE_MAPS_KEY",
-      "default_value": "",
-      "user_viewable": true,
-      "user_editable": true,
-      "rules": "nullable|string|max:100",
-      "field_type": "text"
-    },
-    {
-      "name": "Discord Webhook URL（任意）",
-      "description": "お店が追加されたとき、このWebhookのチャンネルに通知します。Discordのチャンネル設定 > 連携サービス > ウェブフック で作成。空なら通知しません。",
-      "env_variable": "DISCORD_WEBHOOK_URL",
-      "default_value": "",
-      "user_viewable": true,
-      "user_editable": true,
-      "rules": "nullable|string|max:300",
-      "field_type": "text"
-    },
-    {
-      "name": "Google Places APIキー（任意・サーバー用）",
-      "description": "設定すると、営業時間と電話番号をGoogleから自動入力できます。Places API (New) を有効にしたサーバー用のキーで、ブラウザ用のキーとは別にしてください。空ならOpenStreetMapの情報だけを使います（載っていない店も多い）。",
-      "env_variable": "GOOGLE_PLACES_KEY",
-      "default_value": "",
-      "user_viewable": true,
-      "user_editable": true,
-      "rules": "nullable|string|max:100",
-      "field_type": "text"
-    },
-    {
-      "name": "Webhookの表示名（任意）",
-      "description": "Webhookで通知するときの送信者名。BOTっぽく見せたいときは名前を入れる（例: Lumi）。空なら「ご当地めし帖」。",
-      "env_variable": "DISCORD_WEBHOOK_NAME",
-      "default_value": "",
-      "user_viewable": true,
-      "user_editable": true,
-      "rules": "nullable|string|max:80",
-      "field_type": "text"
-    },
-    {
-      "name": "Webhookのアイコン画像URL（任意）",
-      "description": "送信者のアイコン。https のPNG/JPG（SVGは不可）。このサイトの /notify-icon.png も使えます。",
-      "env_variable": "DISCORD_WEBHOOK_AVATAR",
-      "default_value": "",
-      "user_viewable": true,
-      "user_editable": true,
-      "rules": "nullable|string|max:300",
-      "field_type": "text"
-    },
-    {
-      "name": "LumiのURL（任意）",
-      "description": "連携するLumiのアドレス（例: https://lumi.shishen575.net）。トークンを渡さずに、通知・メンバー確認・活動ランク・ロール付与を使えます。設定すると通知はLumi経由が最優先。",
-      "env_variable": "LUMI_URL",
-      "default_value": "",
-      "user_viewable": true,
-      "user_editable": true,
-      "rules": "nullable|string|max:200",
-      "field_type": "text"
-    },
-    {
-      "name": "Lumi接続用トークン（初回のみ）",
-      "description": "Lumiの /integration create で発行したトークン（1回だけ表示・15分で失効）。初回起動時に登録され、以後は不要です。",
-      "env_variable": "LUMI_CONNECT_TOKEN",
-      "default_value": "",
-      "user_viewable": true,
-      "user_editable": true,
-      "rules": "nullable|string|max:300",
-      "field_type": "text"
-    },
-    {
-      "name": "BOT中継URL（任意）",
-      "description": "BOT（Lumiなど）側に作った受け口のURL。BOTのトークンを渡さずに通知できます。設定すると最優先。docs/lumi-relay-snippet.js 参照。",
-      "env_variable": "LUMI_RELAY_URL",
-      "default_value": "",
-      "user_viewable": true,
-      "user_editable": true,
-      "rules": "nullable|string|max:300",
-      "field_type": "text"
-    },
-    {
-      "name": "BOT中継の共有シークレット（任意）",
-      "description": "BOT側の MESHI_RELAY_SECRET と同じ16文字以上のランダム文字列。",
-      "env_variable": "LUMI_RELAY_SECRET",
-      "default_value": "",
-      "user_viewable": true,
-      "user_editable": true,
-      "rules": "nullable|string|max:200",
-      "field_type": "text"
-    },
-    {
-      "name": "通知先チャンネルID（任意）",
-      "description": "BOT経由で新着を通知するチャンネルのID（Discordの開発者モードでチャンネルを右クリック > IDをコピー）。BOTトークンとセットで設定。",
-      "env_variable": "DISCORD_CHANNEL_ID",
-      "default_value": "",
-      "user_viewable": true,
-      "user_editable": true,
-      "rules": "nullable|string|max:30",
-      "field_type": "text"
-    },
-    {
-      "name": "通知用BOTトークン（任意）",
-      "description": "新着通知を送るBOTのトークン。Lumi本体とは別のBOT（専用アプリ）の利用を推奨。BOTにチャンネルの「メッセージを送信」「埋め込みリンク」権限が必要。設定時はWebhookより優先。",
-      "env_variable": "DISCORD_BOT_TOKEN",
-      "default_value": "",
-      "user_viewable": true,
-      "user_editable": true,
-      "rules": "nullable|string|max:200",
-      "field_type": "text"
-    },
-    {
       "name": "Discord Client ID",
       "description": "Discord Developer Portal の OAuth2 > Client ID",
       "env_variable": "DISCORD_CLIENT_ID",
@@ -220,8 +70,28 @@
       "field_type": "text"
     },
     {
+      "name": "LumiのURL",
+      "description": "連携するLumiのアドレス（例: https://lumi.shishen575.net）。通知・メンバー確認・活動ランク・ロール付与に使います。空なら連携しません。",
+      "env_variable": "LUMI_URL",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string|max:200",
+      "field_type": "text"
+    },
+    {
+      "name": "Lumi接続用トークン（初回のみ）",
+      "description": "Lumiの /integration create で発行したトークン（15分で失効）。初回起動で登録され、以後は空で構いません。",
+      "env_variable": "LUMI_CONNECT_TOKEN",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string|max:300",
+      "field_type": "text"
+    },
+    {
       "name": "DiscordサーバーID（任意）",
-      "description": "指定すると、このサーバーのメンバーだけが投稿・いいねできます。空なら Discord ログインできる人は誰でも可。",
+      "description": "指定すると、このサーバーのメンバーだけが書き込めます（Lumi連携の「メンバーに限定」を使うなら不要）。",
       "env_variable": "DISCORD_GUILD_ID",
       "default_value": "",
       "user_viewable": true,
@@ -231,12 +101,72 @@
     },
     {
       "name": "管理者のDiscordユーザーID（任意）",
-      "description": "他人の投稿も削除できる管理者。カンマ区切りで複数指定。",
+      "description": "他人の投稿も削除・編集できる管理者。カンマ区切りで複数。",
       "env_variable": "ADMIN_IDS",
       "default_value": "",
       "user_viewable": true,
       "user_editable": true,
       "rules": "nullable|string|max:200",
+      "field_type": "text"
+    },
+    {
+      "name": "Google Maps APIキー",
+      "description": "設定すると地図がGoogleマップになります。空ならOpenStreetMap。",
+      "env_variable": "GOOGLE_MAPS_KEY",
+      "default_value": "",
+      "user_viewable": false,
+      "user_editable": false,
+      "rules": "nullable|string|max:100",
+      "field_type": "text"
+    },
+    {
+      "name": "Google Places APIキー",
+      "description": "設定すると営業時間・電話をGoogleから自動入力できます（サーバー用キー）。",
+      "env_variable": "GOOGLE_PLACES_KEY",
+      "default_value": "",
+      "user_viewable": false,
+      "user_editable": false,
+      "rules": "nullable|string|max:100",
+      "field_type": "text"
+    },
+    {
+      "name": "自動更新",
+      "description": "1 なら GitHub の最新コードを定期的に取り込み、変更があれば自動で再起動します。",
+      "env_variable": "AUTO_UPDATE",
+      "default_value": "1",
+      "user_viewable": false,
+      "user_editable": false,
+      "rules": "required|in:0,1",
+      "field_type": "text"
+    },
+    {
+      "name": "GitHubリポジトリURL",
+      "description": "自動更新で取り込むリポジトリ。",
+      "env_variable": "GIT_REPO",
+      "default_value": "https://github.com/shishen575/gochi-meshi.git",
+      "user_viewable": false,
+      "user_editable": false,
+      "rules": "required|string|max:200",
+      "field_type": "text"
+    },
+    {
+      "name": "ブランチ",
+      "description": "自動更新で追従するブランチ。",
+      "env_variable": "GIT_BRANCH",
+      "default_value": "main",
+      "user_viewable": false,
+      "user_editable": false,
+      "rules": "required|string|max:60",
+      "field_type": "text"
+    },
+    {
+      "name": "更新確認の間隔（分）",
+      "description": "何分ごとに更新を確認するか。",
+      "env_variable": "UPDATE_INTERVAL",
+      "default_value": "5",
+      "user_viewable": false,
+      "user_editable": false,
+      "rules": "required|integer|min:1|max:1440",
       "field_type": "text"
     }
   ]

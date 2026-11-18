@@ -12,7 +12,7 @@ const PRICES = ["〜1,000円","〜2,000円","〜3,000円","3,000円〜"];
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const S = { region:"", pref:"", city:"", genre:"", q:"", sort:"likes", view:"list", favOnly:false, gkey:null, gfail:false, open:new Set(), reviews:{}, cities:{}, spots:[], me:null, guildRestricted:false, loaded:false };
+const S = { region:"", pref:"", city:"", genre:"", q:"", sort:"likes", view:"list", locEdit:null, locPos:null, favOnly:false, gkey:null, gfail:false, open:new Set(), reviews:{}, cities:{}, spots:[], me:null, guildRestricted:false, loaded:false };
 try { const f = JSON.parse(localStorage.getItem("gochi-filter")||"{}"); S.region=f.region||""; S.pref=f.pref||""; } catch(e){}
 function saveFilter(){ try{ localStorage.setItem("gochi-filter", JSON.stringify({region:S.region,pref:S.pref})); }catch(e){} }
 
@@ -145,13 +145,16 @@ function renderFeed(){
       ${s.ratingCount?`<div class="rate" title="口コミ平均">${stars(s.ratingAvg)} <b>${s.ratingAvg.toFixed(1)}</b> <span class="place">（口コミ${s.ratingCount}件）</span></div>`:""}
       <div class="links"><a class="btn small" href="${map}" target="_blank" rel="noopener noreferrer">Googleマップで開く</a>
         <a class="btn small" href="${route}" target="_blank" rel="noopener noreferrer">ルート案内</a>
+        ${(uid && s.authorId===uid)||admin?`<button class="btn small" data-loc="${esc(s.id)}" type="button">${S.locEdit===s.id?"位置の修正をやめる":"ピンの位置を直す"}</button>`:""}
         <button class="btn small" data-rv="${esc(s.id)}" aria-expanded="${isOpen}" type="button">口コミ${s.ratingCount?`（${s.ratingCount}）`:""}を${isOpen?"閉じる":"見る・書く"}</button></div>
+      ${S.locEdit===s.id?`<div class="locedit"><p class="msg">地図をクリックして、店の場所にピンを動かしてください。</p><div id="loc-map" class="map mini"></div><div class="actions"><button class="btn primary small" data-locsave="${esc(s.id)}" type="button">この位置で保存</button><span class="msg" id="loc-msg"></span></div></div>`:""}
       ${isOpen?`<div class="reviews">${reviewPanel(s)}</div>`:""}
       <div class="card-foot"><span>紹介：${esc(s.authorName)}</span>
         <span class="acts">
         ${(uid && s.authorId===uid)||admin?`<button class="btn small" data-del="${esc(s.id)}" type="button">削除</button>`:""}</span></div>
     </article>`;
   }).join("");
+  mountLocEditor();
 }
 let map = null, layer = null, lastKey = "";
 const pinIcon = (cls) => L.divIcon({ className:"", html:`<div class="pin ${cls||""}"></div>`, iconSize:[26,26], iconAnchor:[13,32], popupAnchor:[0,-30] });
@@ -161,7 +164,7 @@ function baseMap(el, opts){
   return m;
 }
 function popupHtml(s){
-  return `<h3>${esc(s.name)}</h3><p class="pp">${esc(s.pref)} ${esc(s.city)} ・ ${esc(s.genre)}${s.price?" ・ "+esc(s.price):""}</p><p>${esc(s.comment.length>120?s.comment.slice(0,120)+"…":s.comment)}</p><p>${s.ratingCount?`<b>${stars(s.ratingAvg)} ${s.ratingAvg.toFixed(1)}</b>（${s.ratingCount}件） ・ `:""}♥ ${s.likes}</p><p><a href="${gmapUrl(s)}" target="_blank" rel="noopener noreferrer">Googleマップで開く</a> ・ <a href="${routeUrl(s)}" target="_blank" rel="noopener noreferrer">ルート案内</a></p>`;
+  return `<h3>${esc(s.name)}</h3><p class="pp">${esc(s.pref)} ${esc(s.city)} ・ ${esc(s.genre)}${s.price?" ・ "+esc(s.price):""}</p><p>${esc(s.comment.length>120?s.comment.slice(0,120)+"…":s.comment)}</p><p>${s.ratingCount?`<b>${stars(s.ratingAvg)} ${s.ratingAvg.toFixed(1)}</b>（${s.ratingCount}件） ・ `:""}♥ ${s.likes}</p>${s.geo==="city"?`<p class="pp">※位置は市区町村の中心（目安）です</p>`:""}<p><a href="${gmapUrl(s)}" target="_blank" rel="noopener noreferrer">Googleマップで開く</a> ・ <a href="${routeUrl(s)}" target="_blank" rel="noopener noreferrer">ルート案内</a></p>`;
 }
 function mapCount(rows, pts){
   const pending = rows.length - pts;
@@ -233,6 +236,20 @@ function applyView(){
   document.querySelectorAll("[data-view]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === S.view)));
   renderMap();
 }
+let locMap = null, locPin = null;
+function mountLocEditor(){
+  if (locMap) { locMap.remove(); locMap = null; locPin = null; }
+  if (!S.locEdit || !$("loc-map") || typeof L === "undefined") return;
+  const sp = S.spots.find(x => x.id === S.locEdit); if (!sp) return;
+  locMap = baseMap("loc-map");
+  const has = sp.lat != null;
+  if (has) { locPin = L.marker([sp.lat, sp.lng], { icon: pinIcon("sel") }).addTo(locMap); locMap.setView([sp.lat, sp.lng], 16); }
+  S.locPos = has ? { lat:sp.lat, lng:sp.lng } : null;
+  locMap.on("click", ev => {
+    S.locPos = { lat:ev.latlng.lat, lng:ev.latlng.lng };
+    if (locPin) locPin.setLatLng(ev.latlng); else locPin = L.marker(ev.latlng, { icon: pinIcon("sel") }).addTo(locMap);
+  });
+}
 function render(){ renderUser(); renderFilters(); renderFeed(); renderMap(); renderExport(); }
 
 function openForm(){
@@ -298,6 +315,7 @@ function openForm(){
       if (g.city) $("f-city").value = g.city;
       if (g.lat != null) { if (fmap) setPin(g.lat, g.lng, 16); else pos = { lat: g.lat, lng: g.lng }; }
       m.textContent = g.city ? "入力しました。内容を確認して投稿してください。" : "場所は入力しました。市区町村は候補から選んでください。";
+      if (g.approx) m.textContent += "（位置は市区町村の中心です。地図をクリックして店の場所に直せます）";
       if (!g.name) m.textContent += "（店名は手入力してください）";
     } catch (err) { m.className = "msg err"; m.textContent = err.message; }
     $("f-gmgo").disabled = false;
@@ -323,6 +341,17 @@ function openForm(){
 
 document.addEventListener("click", async e => {
   const t = e.target.closest("button"); if (!t) return;
+  if (t.dataset.loc) { S.locEdit = S.locEdit === t.dataset.loc ? null : t.dataset.loc; return renderFeed(); }
+  if (t.dataset.locsave) {
+    const m = $("loc-msg"); if (!S.locPos) { m.className = "msg err"; m.textContent = "地図をクリックして位置を決めてください"; return; }
+    t.disabled = true;
+    try {
+      const r = await api(`/api/spots/${t.dataset.locsave}/location`, { method:"PATCH", body:JSON.stringify(S.locPos) });
+      const sp = S.spots.find(x => x.id === t.dataset.locsave); if (sp) Object.assign(sp, r);
+      S.locEdit = null; S._spotsKey = JSON.stringify(S.spots); render(); $("status").textContent = "ピンの位置を直しました。";
+    } catch (err) { t.disabled = false; m.className = "msg err"; m.textContent = err.message; }
+    return;
+  }
   if (t.dataset.fav) {
     const sp = S.spots.find(x => x.id === t.dataset.fav); if (!sp) return;
     t.disabled = true;
@@ -385,7 +414,7 @@ async function refreshSpots(force){
     S._spotsKey = key;
     // 口コミやフォームを入力中は、作業を壊さないよう描画を見送る
     const ae = document.activeElement;
-    if (!force && ae && ae.closest && ae.closest(".reviews, .form")) { S.spots = next; return; }
+    if (!force && ((ae && ae.closest && ae.closest(".reviews, .form")) || S.locEdit)) { S.spots = next; return; }
     S.spots = next; render();
   } catch (e) {}
 }

@@ -158,6 +158,42 @@ function reverseGeocode(lat, lng) {
   geoChain = job.catch(() => {});
   return job;
 }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function queue(fn) {
+  const job = geoChain.then(async () => { const r = await fn(); await sleep(1100); return r; });
+  geoChain = job.catch(() => {});
+  return job;
+}
+function searchRaw(params) {
+  return queue(() => fetch('https://nominatim.openstreetmap.org/search?' + new URLSearchParams({ format: 'jsonv2', limit: '1', countrycodes: 'jp', 'accept-language': 'ja', ...params }),
+    { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(6000) }).then(r => (r.ok ? r.json() : [])).then(a => a[0] || null).catch(() => null));
+}
+// 市区町村の中心と範囲。店の位置がこの範囲から外れる検索結果（同名の別の店など）は採用しない
+const areaCache = new Map();
+async function cityArea(pref, city) {
+  const key = pref + city;
+  if (areaCache.has(key)) return areaCache.get(key);
+  const r = await searchRaw({ q: key });
+  let area = null;
+  if (r && inJapan(+r.lat, +r.lon) && Array.isArray(r.boundingbox)) {
+    const [south, north, west, east] = r.boundingbox.map(Number);
+    area = { lat: +(+r.lat).toFixed(6), lng: +(+r.lon).toFixed(6), south, north, west, east };
+  }
+  if (area) areaCache.set(key, area);
+  return area;
+}
+// 市区町村の範囲内だけで探す。見つからなければ市区町村の中心（geo:'city' = 目安）
+async function locateIn(pref, city, queries) {
+  const area = await cityArea(pref, city);
+  if (!area) return null;
+  const pad = 0.005;
+  for (const q of queries) {
+    const r = await searchRaw({ q, viewbox: `${area.west - pad},${area.north + pad},${area.east + pad},${area.south - pad}`, bounded: '1' });
+    if (r && inJapan(+r.lat, +r.lon)) return { lat: +(+r.lat).toFixed(6), lng: +(+r.lon).toFixed(6), geo: 'auto' };
+  }
+  return { lat: area.lat, lng: area.lng, geo: 'city' };
+}
+const locateSpot = sp => locateIn(sp.pref, sp.city, [`${sp.name} ${sp.city}`, sp.name]);
 const spotQueries = s => [`${s.name} ${s.pref}${s.city}`, `${s.pref}${s.city}`];
 
 /* ---------- API ---------- */
@@ -227,7 +263,7 @@ app.post('/api/spots', needJson, need, limit(10, 3600e3), (req, res) => {
   db.spots.push(spot); save();
   res.status(201).json({ ...spot, likes: 0, liked: false });
   if (spot.lat == null) {
-    geocode(spotQueries(spot)).then(g => { if (g) { spot.lat = g.lat; spot.lng = g.lng; spot.geo = 'auto'; save(); } });
+    locateSpot(spot).then(g => { if (g) { spot.lat = g.lat; spot.lng = g.lng; spot.geo = g.geo; spot.v = 2; save(); } });
   }
 });
 
@@ -257,8 +293,8 @@ app.get('/api/gmaps', need, limit(15, 600e3), async (req, res) => {
     // 住所の文字から都道府県・市区町村を決め、位置は住所→店名+地域→地域の順に探す
     const a = parseAddress(address, PREFS, CITIES);
     out.pref = a.pref; out.city = a.city;
-    const g = await geocode([address, name && a.pref ? `${name} ${a.pref}${a.city}` : '', a.pref ? `${a.pref}${a.city}` : ''].filter(Boolean));
-    if (g) { out.lat = g.lat; out.lng = g.lng; }
+    const g = a.pref && a.city ? await locateIn(a.pref, a.city, [address, name ? `${name} ${a.city}` : ''].filter(Boolean)) : await geocode([address]);
+    if (g) { out.lat = g.lat; out.lng = g.lng; out.approx = g.geo === 'city'; }
     if (!out.pref && out.lat == null) return res.status(404).json({ error: 'リンクから場所を特定できませんでした。' });
     return res.json(out);
   }
@@ -279,6 +315,17 @@ app.get('/api/geocode', need, limit(20, 600e3), async (req, res) => {
   const g = await geocode([q]);
   if (!g) return res.status(404).json({ error: '場所が見つかりませんでした' });
   res.json(g);
+});
+
+// 位置の修正（投稿者か管理者）
+app.patch('/api/spots/:id/location', needJson, need, limit(60, 3600e3), (req, res) => {
+  const sp = db.spots.find(x => x.id === req.params.id);
+  if (!sp) return res.status(404).json({ error: '見つかりません' });
+  if (sp.authorId !== req.user.id && !req.user.admin) return res.status(403).json({ error: '修正できるのは投稿者か管理者のみです' });
+  const lat = Number(req.body && req.body.lat), lng = Number(req.body && req.body.lng);
+  if (!inJapan(lat, lng)) return res.status(400).json({ error: '日本国内の位置を指定してください' });
+  sp.lat = +lat.toFixed(6); sp.lng = +lng.toFixed(6); sp.geo = 'user'; sp.v = 2; save();
+  res.json({ lat: sp.lat, lng: sp.lng, geo: sp.geo });
 });
 
 app.post('/api/spots/:id/like', needJson, need, limit(60, 600e3), (req, res) => {
@@ -375,8 +422,11 @@ app.get('/export.csv', (req, res) => {
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: '5m' }));
 app.use((req, res) => res.status(404).send('Not found'));
 
-// 起動時に、位置がまだ無い投稿を順に補完する
-(async () => { for (const sp of db.spots.filter(x => x.lat == null).slice(0, 200)) { const g = await geocode(spotQueries(sp)); if (g) { sp.lat = g.lat; sp.lng = g.lng; sp.geo = 'auto'; save(); } } })();
+// 起動時に、位置が無い投稿と、旧方式で自動推定した投稿（範囲チェックなし）を順に補正する
+(async () => {
+  const todo = db.spots.filter(x => x.lat == null || (x.geo === 'auto' && x.v !== 2)).slice(0, 300);
+  for (const sp of todo) { const g = await locateSpot(sp); if (g) { sp.lat = g.lat; sp.lng = g.lng; sp.geo = g.geo; sp.v = 2; save(); } }
+})();
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`ご当地めし帖 起動: ポート ${PORT} / 公開URL ${PUBLIC_URL}`);

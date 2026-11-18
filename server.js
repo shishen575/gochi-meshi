@@ -336,7 +336,10 @@ async function sendEmbed(embed, routing) {
       const withRoute = routing && routing.route && Date.now() > routeOffUntil;
       let r = await lumi.call('POST', '/internal/meshi-notify', withRoute ? { embed, ...routing } : { embed });
       if (!r.ok && withRoute && r.status === 400) { routeOffUntil = Date.now() + 3600e3; r = await lumi.call('POST', '/internal/meshi-notify', { embed }); }
-      if (r.ok) return;
+      if (r.ok) {
+        if (r.data && r.data.sent === 0 && Date.now() - (sendEmbed.warnedAt || 0) > 3600e3) { sendEmbed.warnedAt = Date.now(); console.warn('Lumi通知: 送信先が0件でした（Lumiのダッシュボードで、通常の通知先か地域のチャンネルを選んでください）'); }
+        return;
+      }
       if (!(relayReady || botOk || hookOk)) { if (!r.blocked) console.warn('Lumi通知に失敗:', r.status, r.status === 403 ? '（Lumiのダッシュボードで通知をオンにし、チャンネルを選んでください）' : ''); return; }
     }
     if (relayReady) {

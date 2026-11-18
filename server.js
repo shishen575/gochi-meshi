@@ -1,6 +1,7 @@
 'use strict';
 const express = require('express');
 const crypto = require('crypto');
+const { guessGenre } = require('./public/genre.js');
 const { addressVariants, parseGmapsUrl, parseAddress, pickCity, isAllowedHost } = require('./lib/gmaps');
 const fs = require('fs');
 const path = require('path');
@@ -214,7 +215,7 @@ async function placeInfo(name, pref, city) {
       const r = await fetch(PLACES_ENDPOINT, {
         method: 'POST', signal: AbortSignal.timeout(8000),
         headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': PLACES_KEY,
-          'X-Goog-FieldMask': 'places.displayName,places.formattedAddress,places.regularOpeningHours.weekdayDescriptions,places.nationalPhoneNumber' },
+          'X-Goog-FieldMask': 'places.displayName,places.formattedAddress,places.regularOpeningHours.weekdayDescriptions,places.nationalPhoneNumber,places.primaryType' },
         body: JSON.stringify({ textQuery: `${name} ${pref}${city}`, languageCode: 'ja', regionCode: 'JP', maxResultCount: 1 })
       });
       const j = r.ok ? await r.json() : null;
@@ -222,7 +223,8 @@ async function placeInfo(name, pref, city) {
       if (pl && String(pl.formattedAddress || '').includes(pref)) {   // 別の地域の同名店は採用しない
         const hours = ((pl.regularOpeningHours || {}).weekdayDescriptions || []).join('\n').slice(0, 400);
         const phone = String(pl.nationalPhoneNumber || '').replace(/[^0-9+\-()\s]/g, '').slice(0, 30);
-        if (hours || phone) return { hours, phone, source: 'google' };
+        const genre = guessGenre({ name, tags: pl.primaryType || '' });
+        if (hours || phone || genre) return { hours, phone, genre, source: 'google' };
       } else if (!r.ok) console.warn('Places API エラー:', r.status);
     } catch (e) { console.warn('Places API 失敗:', e.message); }
   }
@@ -232,7 +234,8 @@ async function placeInfo(name, pref, city) {
   const hit = await searchRaw({ q: `${name} ${city}`, extratags: '1', viewbox: `${area.west - pad},${area.north + pad},${area.east + pad},${area.south - pad}`, bounded: '1' });
   const t = (hit && hit.extratags) || {};
   const hours = jaHours(t.opening_hours), phone = String(t.phone || t['contact:phone'] || '').replace(/[^0-9+\-()\s]/g, '').slice(0, 30);
-  return hours || phone ? { hours, phone, source: 'osm' } : null;
+  const genre = guessGenre({ name, tags: [t.cuisine, hit && hit.type, hit && hit.category].filter(Boolean).join(' ') });
+  return hours || phone || genre ? { hours, phone, genre, source: 'osm' } : null;
 }
 const spotQueries = s => [`${s.name} ${s.pref}${s.city}`, `${s.pref}${s.city}`];
 
@@ -337,7 +340,7 @@ app.post('/api/spots', needJson, need, limit(10, 3600e3), (req, res) => {
   if (!spot.name || !spot.city || !spot.comment) return res.status(400).json({ error: '店名・市区町村・おすすめポイントは必須です' });
   if (!PREFS.includes(spot.pref)) return res.status(400).json({ error: '都道府県が不正です' });
   if (CITIES[spot.pref] && !CITIES[spot.pref].includes(spot.city)) return res.status(400).json({ error: '市区町村は一覧から選んでください（例：札幌市中央区）' });
-  if (!GENRES.includes(spot.genre)) spot.genre = 'その他';
+  if (!GENRES.includes(spot.genre)) spot.genre = guessGenre({ name: spot.name, comment: spot.comment }) || 'その他';
   if (!PRICES.includes(spot.price)) spot.price = '';
   if (db.spots.length >= 20000) return res.status(507).json({ error: '保存上限に達しました' });
   const lat = Number(b.lat), lng = Number(b.lng);
@@ -371,7 +374,7 @@ app.get('/api/place-info', need, limit(30, 600e3), async (req, res) => {
   const name = clean(req.query.name, 60), pref = clean(req.query.pref, 10), city = clean(req.query.city, 30);
   if (!name || !PREFS.includes(pref) || !city) return res.status(400).json({ error: '店名・都道府県・市区町村を入力してください' });
   const info = await placeInfo(name, pref, city);
-  if (!info) return res.status(404).json({ error: '営業時間の情報が見つかりませんでした。手入力してください。' });
+  if (!info) return res.status(404).json({ error: '営業時間などの情報が見つかりませんでした。手入力してください。' });
   res.json(info);
 });
 
@@ -431,7 +434,7 @@ app.patch('/api/spots/:id', needJson, need, limit(60, 3600e3), (req, res) => {
   if (!next.name || !next.city || !next.comment) return res.status(400).json({ error: '店名・市区町村・おすすめポイントは必須です' });
   if (!PREFS.includes(next.pref)) return res.status(400).json({ error: '都道府県が不正です' });
   if (CITIES[next.pref] && !CITIES[next.pref].includes(next.city)) return res.status(400).json({ error: '市区町村は一覧から選んでください（例：札幌市中央区）' });
-  if (!GENRES.includes(next.genre)) next.genre = 'その他';
+  if (!GENRES.includes(next.genre)) next.genre = guessGenre({ name: next.name, comment: next.comment }) || 'その他';
   if (!PRICES.includes(next.price)) next.price = '';
   const areaChanged = next.pref !== sp.pref || next.city !== sp.city, nameChanged = next.name !== sp.name;
   Object.assign(sp, next);

@@ -265,7 +265,7 @@ function openForm(edit){
       <span class="msg" id="f-gmmsg">Googleマップアプリで店を開き、共有 → リンクをコピー、で貼れます。店名・場所・市区町村が入ります。</span></div>
     <div class="row">
       <div class="field"><label for="f-name">店名・料理名（必須）</label><input class="input" id="f-name" required maxlength="60"></div>
-      <div class="field"><label for="f-genre">ジャンル</label><select class="input" id="f-genre">${GENRES.map(g=>`<option>${g}</option>`).join("")}</select></div>
+      <div class="field"><label for="f-genre">ジャンル</label><select class="input" id="f-genre"><option value="">おまかせ（店名から判定）</option>${GENRES.map(g=>`<option>${g}</option>`).join("")}</select><span class="msg" id="f-gnote"></span></div>
     </div>
     <div class="row">
       <div class="field"><label for="f-pref">都道府県（必須）</label><select class="input" id="f-pref" required>${prefOpts}</select></div>
@@ -287,6 +287,12 @@ function openForm(edit){
     sel.innerHTML = `<option value="">${p ? "市区町村を選んでください" : "先に都道府県を選んでください"}</option>` + cityOptions(S.cities[p] || [], keep || "", (c, all) => all ? c + "（全区）" : c); };
   $("f-pref").addEventListener("change", () => fillCities()); fillCities(E ? E.city : "");
   if (E) { $("f-name").value = E.name; $("f-genre").value = E.genre; $("f-price").value = E.price || ""; $("f-hours").value = E.hours || ""; $("f-phone").value = E.phone || ""; $("f-comment").value = E.comment; }
+  // ジャンルは、手で選ぶまでは店名・自動入力の結果から自動で決める
+  let genreDirty = !!E;
+  $("f-genre").addEventListener("change", () => { genreDirty = true; $("f-gnote").textContent = ""; });
+  const applyGenre = (g, note) => { if (genreDirty || !g) return; $("f-genre").value = g; $("f-gnote").textContent = note || "（自動で選びました）"; };
+  let gTimer = null;
+  $("f-name").addEventListener("input", () => { clearTimeout(gTimer); gTimer = setTimeout(() => { const g = Genre.guessGenre({ name: $("f-name").value }); if (g) applyGenre(g); }, 250); });
   const orig = E && E.lat != null ? { lat:E.lat, lng:E.lng } : null;
   let fmap = null, fpin = null, pos = null;
   const closeForm = () => { if (fmap) { fmap.remove(); fmap = null; } $("formSlot").innerHTML = ""; };
@@ -320,7 +326,7 @@ function openForm(edit){
     $("f-gmgo").disabled = true; m.textContent = "読み取り中…";
     try {
       const g = await api("/api/gmaps?url=" + encodeURIComponent(link));
-      if (g.name && !$("f-name").value.trim()) $("f-name").value = g.name;
+      if (g.name && !$("f-name").value.trim()) { $("f-name").value = g.name; applyGenre(Genre.guessGenre({ name: g.name })); }
       if (g.pref) { $("f-pref").value = g.pref; fillCities(); }
       if (g.city) $("f-city").value = g.city;
       if (g.lat != null) { if (fmap) setPin(g.lat, g.lng, 16); else pos = { lat: g.lat, lng: g.lng }; }
@@ -339,6 +345,7 @@ function openForm(edit){
       const r = await api(`/api/place-info?name=${encodeURIComponent(name)}&pref=${encodeURIComponent(pref)}&city=${encodeURIComponent(city)}`);
       if (r.hours && !$("f-hours").value.trim()) $("f-hours").value = r.hours;
       if (r.phone && !$("f-phone").value.trim()) $("f-phone").value = r.phone;
+      if (r.genre) applyGenre(r.genre);
       m.textContent = (r.source === "google" ? "Googleの情報を入れました。" : "OpenStreetMapの情報を入れました。") + "内容を確認してください。";
     } catch (err) { m.className = "msg"; m.textContent = quiet ? "" : err.message; }
     $("f-hoursgo").disabled = false;

@@ -263,7 +263,7 @@ const LUMI_MANIFEST = {
     { key: 'show_rank', type: 'toggle', label: '投稿者名の横に活動ランクを表示', help: 'Lumiの活動ランク（ロール名）を、お店のカードに表示します。' },
     { key: 'notify_reviews', type: 'toggle', label: '口コミも通知する', help: 'オフのときは、新しいお店の追加だけを通知します。' },
     { key: 'thread_by_pref', type: 'toggle', label: '都道府県ごとのスレッドにまとめる', help: 'オンにすると、通知を「東京都」のようなスレッドに分けて投稿します（なければ作ります）。' },
-    { key: 'channel_hokkaido_tohoku', type: 'channel', label: '通知先：北海道・東北', help: '選ばない地域は、通常の通知先に送ります。' },
+    { key: 'channel_hokkaido_tohoku', type: 'channel', label: '通知先：北海道・東北', help: '選ばない地域は、通常の投稿先に送ります。通常の投稿先も、必ず1つ選んでください。' },
     { key: 'channel_kanto', type: 'channel', label: '通知先：関東', help: '' },
     { key: 'channel_chubu', type: 'channel', label: '通知先：中部', help: '' },
     { key: 'channel_kinki', type: 'channel', label: '通知先：近畿', help: '' },
@@ -336,11 +336,17 @@ async function sendEmbed(embed, routing) {
       const withRoute = routing && routing.route && Date.now() > routeOffUntil;
       let r = await lumi.call('POST', '/internal/meshi-notify', withRoute ? { embed, ...routing } : { embed });
       if (!r.ok && withRoute && r.status === 400) { routeOffUntil = Date.now() + 3600e3; r = await lumi.call('POST', '/internal/meshi-notify', { embed }); }
-      if (r.ok) {
-        if (r.data && r.data.sent === 0 && Date.now() - (sendEmbed.warnedAt || 0) > 3600e3) { sendEmbed.warnedAt = Date.now(); console.warn('Lumi通知: 送信先が0件でした（Lumiのダッシュボードで、通常の通知先か地域のチャンネルを選んでください）'); }
-        return;
+      if (r.ok) return;
+      if (!r.blocked && Date.now() - (sendEmbed.warnedAt || 0) > 600e3) {
+        sendEmbed.warnedAt = Date.now();
+        const code = r.data && r.data.error, detail = r.data && r.data.detail;
+        const hint = code === 'not enabled' ? 'Lumiのダッシュボード「連携」で、通知（notify）をオンにしてください'
+          : code === 'not configured' ? '通常の投稿先を選んでください（地域のチャンネルだけを選んでも、通常の投稿先が未選択だと送れません）'
+          : code === 'send failed' ? '宛先のチャンネルが無い、またはLumiに送信権限がありません'
+          : code === 'bad embed' ? '埋め込みの形式エラー（サイト側の不具合の可能性）' : '';
+        console.warn('Lumi通知に失敗:', r.status, code || '', detail || '', hint);
       }
-      if (!(relayReady || botOk || hookOk)) { if (!r.blocked) console.warn('Lumi通知に失敗:', r.status, r.status === 403 ? '（Lumiのダッシュボードで通知をオンにし、チャンネルを選んでください）' : ''); return; }
+      if (!(relayReady || botOk || hookOk)) return;
     }
     if (relayReady) {
       // BOT側に渡すのは署名つきの埋め込みだけ。宛先チャンネルはBOT側で固定されているので、トークンもチャンネルIDも持たない

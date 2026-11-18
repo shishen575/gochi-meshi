@@ -40,17 +40,20 @@ main() {
 
   update_code; install_deps || exit 1
 
-  local CF="" NODE=""
+  local CF="" NODE="" TOKFILE=""
   if [ -n "$CF_TUNNEL_TOKEN" ] && [ -x ./cloudflared ]; then
     echo "[tunnel] Cloudflare Tunnel を起動します"
-    ./cloudflared tunnel --no-autoupdate run --token "$CF_TUNNEL_TOKEN" &
+    # トークンはファイル経由で渡し、環境変数からは消す（cloudflared が環境変数をログに出すため、トークンがログに残ってしまう）
+    TOKFILE=$(mktemp) && chmod 600 "$TOKFILE" && printf '%s' "$CF_TUNNEL_TOKEN" > "$TOKFILE"
+    unset CF_TUNNEL_TOKEN
+    ./cloudflared tunnel --no-autoupdate run --token-file "$TOKFILE" &
     CF=$!
   else
     echo "[tunnel] CF_TUNNEL_TOKEN が未設定のためトンネルは起動しません"
   fi
 
   local STOP=0
-  trap 'STOP=1; kill $NODE $CF 2>/dev/null' TERM INT
+  trap 'STOP=1; kill $NODE $CF 2>/dev/null; [ -n "$TOKFILE" ] && rm -f "$TOKFILE"' TERM INT
 
   while [ "$STOP" = "0" ]; do
     node server.js &

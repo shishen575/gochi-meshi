@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const crypto = require('crypto');
-const { parseGmapsUrl, parseAddress, pickCity, isAllowedHost } = require('./lib/gmaps');
+const { addressVariants, parseGmapsUrl, parseAddress, pickCity, isAllowedHost } = require('./lib/gmaps');
 const fs = require('fs');
 const path = require('path');
 
@@ -368,7 +368,7 @@ app.get('/api/gmaps', need, limit(15, 600e3), async (req, res) => {
     // 住所の文字から都道府県・市区町村を決め、位置は住所→店名+地域→地域の順に探す
     const a = parseAddress(address, PREFS, CITIES);
     out.pref = a.pref; out.city = a.city;
-    const g = a.pref && a.city ? await locateIn(a.pref, a.city, [address, name ? `${name} ${a.city}` : ''].filter(Boolean)) : await geocode([address]);
+    const g = a.pref && a.city ? await locateIn(a.pref, a.city, (() => { const v = addressVariants(address); return [...v.precise, name ? `${name} ${a.city}` : '', v.coarse].filter(Boolean); })()) : await geocode([address]);
     if (g) { out.lat = g.lat; out.lng = g.lng; out.approx = g.geo === 'city'; }
     if (!out.pref && out.lat == null) return res.status(404).json({ error: 'リンクから場所を特定できませんでした。' });
     return res.json(out);

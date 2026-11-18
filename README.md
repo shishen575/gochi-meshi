@@ -21,3 +21,8 @@ Discord OAuth2 ログイン、Node.js (Express)、JSON 保存、Cloudflare Tunne
 Google Cloud で「Maps JavaScript API」を有効にし、APIキーを作成（HTTPリファラ制限に公開URLを登録）。
 パネルの変数 `GOOGLE_MAPS_KEY` に入れて再起動すると、地図がGoogleマップになります。
 投稿のたびにピンが自動で増え、開いたままの画面も30秒ごとに更新されます。未設定ならOpenStreetMapです。
+
+## Discord通知の送り方（優先順）
+1. **BOT中継**（`LUMI_RELAY_URL` + `LUMI_RELAY_SECRET`）: BOTのトークンを渡さずに通知。BOT側に `docs/lumi-relay-snippet.js` を組み込む。
+2. **BOT直接**（`DISCORD_BOT_TOKEN` + `DISCORD_CHANNEL_ID`）
+3. **Webhook**（`DISCORD_WEBHOOK_URL`）

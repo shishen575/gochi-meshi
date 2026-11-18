@@ -120,6 +120,26 @@
       "field_type": "text"
     },
     {
+      "name": "BOT中継URL（任意）",
+      "description": "BOT（Lumiなど）側に作った受け口のURL。BOTのトークンを渡さずに通知できます。設定すると最優先。docs/lumi-relay-snippet.js 参照。",
+      "env_variable": "LUMI_RELAY_URL",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string|max:300",
+      "field_type": "text"
+    },
+    {
+      "name": "BOT中継の共有シークレット（任意）",
+      "description": "BOT側の MESHI_RELAY_SECRET と同じ16文字以上のランダム文字列。",
+      "env_variable": "LUMI_RELAY_SECRET",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string|max:200",
+      "field_type": "text"
+    },
+    {
       "name": "通知先チャンネルID（任意）",
       "description": "BOT経由で新着を通知するチャンネルのID（Discordの開発者モードでチャンネルを右クリック > IDをコピー）。BOTトークンとセットで設定。",
       "env_variable": "DISCORD_CHANNEL_ID",

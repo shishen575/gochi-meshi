@@ -15,6 +15,8 @@ const GOOGLE_MAPS_KEY = (process.env.GOOGLE_MAPS_KEY || '').trim();   // 設定�
 const WEBHOOK_URL = (process.env.DISCORD_WEBHOOK_URL || '').trim();   // 設定すると、お店が追加されたときにそのチャンネルへ通知
 const PLACES_KEY = (process.env.GOOGLE_PLACES_KEY || '').trim();        // サーバー用キー（Places API (New)）。設定すると営業時間・電話をGoogleから取得
 const PLACES_ENDPOINT = process.env.GOOGLE_PLACES_ENDPOINT || 'https://places.googleapis.com/v1/places:searchText';
+const RELAY_URL = (process.env.LUMI_RELAY_URL || '').trim();           // Lumi等のBOT側の受け口（トークンを渡さずに通知。最優先）
+const RELAY_SECRET = (process.env.LUMI_RELAY_SECRET || '').trim();
 const BOT_TOKEN = (process.env.DISCORD_BOT_TOKEN || '').trim();         // BOT経由で通知する場合（Webhookより優先）
 const NOTIFY_CHANNEL_ID = (process.env.DISCORD_CHANNEL_ID || '').trim();
 const DISCORD_API = (process.env.DISCORD_API_BASE || 'https://discord.com/api/v10').replace(/\/+$/, '');
@@ -238,8 +240,11 @@ if (WEBHOOK_URL && !hookOk) console.warn('警告: DISCORD_WEBHOOK_URL の形式�
 const mdEsc = t => String(t).replace(/([\\*_~`|>\[\]()#])/g, '\\$1');
 const botOk = !!BOT_TOKEN && /^\d{15,25}$/.test(NOTIFY_CHANNEL_ID);
 if ((BOT_TOKEN || NOTIFY_CHANNEL_ID) && !botOk) console.warn('警告: DISCORD_BOT_TOKEN と DISCORD_CHANNEL_ID（数字のID）を両方正しく設定してください。BOT通知は無効です');
+const relayOk = /^https:\/\//.test(RELAY_URL) || /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(RELAY_URL);
+if ((RELAY_URL || RELAY_SECRET) && !(relayOk && RELAY_SECRET.length >= 16)) console.warn('警告: LUMI_RELAY_URL（https）と LUMI_RELAY_SECRET（16文字以上）を両方設定してください。中継通知は無効です');
+const relayReady = relayOk && RELAY_SECRET.length >= 16;
 async function notifyDiscord(spot) {
-  if (!botOk && !hookOk) return;
+  if (!relayReady && !botOk && !hookOk) return;
   const fields = [{ name: '場所', value: mdEsc(`${spot.pref} ${spot.city}`), inline: true }, { name: 'ジャンル', value: mdEsc(spot.genre), inline: true }];
   if (spot.price) fields.push({ name: '予算', value: mdEsc(spot.price), inline: true });
   const gmap = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(`${spot.name} ${spot.pref}${spot.city}`);
@@ -251,6 +256,15 @@ async function notifyDiscord(spot) {
   };
   if (/^https:\/\/cdn\.discordapp\.com\//.test(spot.authorAvatar || '')) embed.author.icon_url = spot.authorAvatar;
   try {
+    if (relayReady) {
+      // BOT側に渡すのは署名つきの埋め込みだけ。宛先チャンネルはBOT側で固定されているので、トークンもチャンネルIDも持たない
+      const body = JSON.stringify({ embed });
+      const ts = Date.now();
+      const sig = crypto.createHmac('sha256', RELAY_SECRET).update(ts + '.' + body).digest('hex');
+      const r = await fetch(RELAY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Timestamp': String(ts), 'X-Signature': sig }, body, signal: AbortSignal.timeout(8000) });
+      if (!r.ok) console.warn('中継通知に失敗:', r.status);
+      return;
+    }
     const url = botOk ? `${DISCORD_API}/channels/${NOTIFY_CHANNEL_ID}/messages` : WEBHOOK_URL;
     const headers = { 'Content-Type': 'application/json' };
     if (botOk) headers.Authorization = 'Bot ' + BOT_TOKEN;
@@ -342,7 +356,7 @@ async function resolveGmapsUrl(input) {
     try { u = new URL(url); } catch (e) { return null; }
     if (u.protocol !== 'https:' || !isAllowedHost(u.hostname)) return null;
     const parsed = parseGmapsUrl(url);
-    if (parsed && (parsed.lat != null || parsed.address)) return { url, parsed };
+    if (parsed && (parsed.lat != null || parsed.address || (parsed.name && parsed.hint))) return { url, parsed };
     const r = await fetch(url, { redirect: 'manual', headers: { 'User-Agent': 'Mozilla/5.0 (compatible; gochi-meshi)', 'Accept-Language': 'ja' }, signal: AbortSignal.timeout(6000) }).catch(() => null);
     if (!r) return parsed ? { url, parsed } : null;
     const loc = r.headers.get('location');
@@ -362,7 +376,7 @@ app.get('/api/place-info', need, limit(30, 600e3), async (req, res) => {
 app.get('/api/gmaps', need, limit(15, 600e3), async (req, res) => {
   const found = await resolveGmapsUrl(clean(req.query.url, 600));
   if (!found) return res.status(400).json({ error: 'Googleマップのリンクを読み取れませんでした。共有ボタンでコピーしたリンクを貼ってください。' });
-  let { name, lat, lng, address } = found.parsed;
+  let { name, lat, lng, address, hint } = found.parsed;
   const out = { name, lat: null, lng: null, pref: '', city: '' };
   if (address) {
     // 住所の文字から都道府県・市区町村を決め、位置は住所→店名+地域→地域の順に探す
@@ -373,7 +387,14 @@ app.get('/api/gmaps', need, limit(15, 600e3), async (req, res) => {
     if (!out.pref && out.lat == null) return res.status(404).json({ error: 'リンクから場所を特定できませんでした。' });
     return res.json(out);
   }
-  if (lat == null && name) { const g = await geocode([name]); if (g) { lat = g.lat; lng = g.lng; } }
+  if (lat == null && name && hint) {
+    // 店IDのヒントの近く(±約8km)だけで店名を探す。見つからなければヒントの位置（目安）
+    const d = 0.08;
+    const r = await searchRaw({ q: name, viewbox: `${hint.lng - d},${hint.lat + d},${hint.lng + d},${hint.lat - d}`, bounded: '1' });
+    if (r && inJapan(+r.lat, +r.lon)) { lat = +(+r.lat).toFixed(6); lng = +(+r.lon).toFixed(6); }
+    else { lat = hint.lat; lng = hint.lng; out.approx = true; }
+  }
+  if (lat == null && name) { const g = await geocode([name]); if (g) { lat = g.lat; lng = g.lng; out.approx = true; } }
   if (lat == null) return res.status(404).json({ error: 'リンクから場所を特定できませんでした。' });
   out.lat = lat; out.lng = lng;
   const addr = await reverseGeocode(lat, lng);
@@ -535,6 +556,6 @@ app.use((req, res) => res.status(404).send('Not found'));
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`ご当地めし帖 起動: ポート ${PORT} / 公開URL ${PUBLIC_URL}`);
   console.log(`Discord リダイレクトURI: ${REDIRECT_URI}`);
-  console.log('Discord通知: ' + (botOk ? '有効（BOT経由）' : hookOk ? '有効（Webhook）' : '無効（DISCORD_CHANNEL_ID+DISCORD_BOT_TOKEN か DISCORD_WEBHOOK_URL を設定）'));
+  console.log('Discord通知: ' + (relayReady ? '有効（BOT中継）' : botOk ? '有効（BOT経由）' : hookOk ? '有効（Webhook）' : '無効（DISCORD_CHANNEL_ID+DISCORD_BOT_TOKEN か DISCORD_WEBHOOK_URL を設定）'));
   if (!CLIENT_ID || !CLIENT_SECRET) console.warn('警告: DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET が未設定です（ログイン不可）');
 });

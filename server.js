@@ -15,6 +15,9 @@ const GOOGLE_MAPS_KEY = (process.env.GOOGLE_MAPS_KEY || '').trim();   // 設定�
 const WEBHOOK_URL = (process.env.DISCORD_WEBHOOK_URL || '').trim();   // 設定すると、お店が追加されたときにそのチャンネルへ通知
 const PLACES_KEY = (process.env.GOOGLE_PLACES_KEY || '').trim();        // サーバー用キー（Places API (New)）。設定すると営業時間・電話をGoogleから取得
 const PLACES_ENDPOINT = process.env.GOOGLE_PLACES_ENDPOINT || 'https://places.googleapis.com/v1/places:searchText';
+const BOT_TOKEN = (process.env.DISCORD_BOT_TOKEN || '').trim();         // BOT経由で通知する場合（Webhookより優先）
+const NOTIFY_CHANNEL_ID = (process.env.DISCORD_CHANNEL_ID || '').trim();
+const DISCORD_API = (process.env.DISCORD_API_BASE || 'https://discord.com/api/v10').replace(/\/+$/, '');
 const ADMIN_IDS = (process.env.ADMIN_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
 const SECURE = PUBLIC_URL.startsWith('https://');
@@ -233,8 +236,10 @@ const spotQueries = s => [`${s.name} ${s.pref}${s.city}`, `${s.pref}${s.city}`];
 const hookOk = /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(WEBHOOK_URL) || /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(WEBHOOK_URL);
 if (WEBHOOK_URL && !hookOk) console.warn('警告: DISCORD_WEBHOOK_URL の形式が正しくないため、通知は無効です');
 const mdEsc = t => String(t).replace(/([\\*_~`|>\[\]()#])/g, '\\$1');
+const botOk = !!BOT_TOKEN && /^\d{15,25}$/.test(NOTIFY_CHANNEL_ID);
+if ((BOT_TOKEN || NOTIFY_CHANNEL_ID) && !botOk) console.warn('警告: DISCORD_BOT_TOKEN と DISCORD_CHANNEL_ID（数字のID）を両方正しく設定してください。BOT通知は無効です');
 async function notifyDiscord(spot) {
-  if (!hookOk) return;
+  if (!botOk && !hookOk) return;
   const fields = [{ name: '場所', value: mdEsc(`${spot.pref} ${spot.city}`), inline: true }, { name: 'ジャンル', value: mdEsc(spot.genre), inline: true }];
   if (spot.price) fields.push({ name: '予算', value: mdEsc(spot.price), inline: true });
   const gmap = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(`${spot.name} ${spot.pref}${spot.city}`);
@@ -246,9 +251,12 @@ async function notifyDiscord(spot) {
   };
   if (/^https:\/\/cdn\.discordapp\.com\//.test(spot.authorAvatar || '')) embed.author.icon_url = spot.authorAvatar;
   try {
-    const r = await fetch(WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: 'ご当地めし帖', embeds: [embed], allowed_mentions: { parse: [] } }), signal: AbortSignal.timeout(8000) });
-    if (!r.ok) console.warn('Discord通知に失敗:', r.status);
+    const url = botOk ? `${DISCORD_API}/channels/${NOTIFY_CHANNEL_ID}/messages` : WEBHOOK_URL;
+    const headers = { 'Content-Type': 'application/json' };
+    if (botOk) headers.Authorization = 'Bot ' + BOT_TOKEN;
+    const payload = botOk ? { embeds: [embed], allowed_mentions: { parse: [] } } : { username: 'ご当地めし帖', embeds: [embed], allowed_mentions: { parse: [] } };
+    const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(8000) });
+    if (!r.ok) console.warn('Discord通知に失敗:', r.status, botOk ? '（BOTにチャンネルの「メッセージを送信」「埋め込みリンク」権限があるか確認）' : '');
   } catch (e) { console.warn('Discord通知に失敗:', e.message); }
 }
 
@@ -384,6 +392,35 @@ app.get('/api/geocode', need, limit(20, 600e3), async (req, res) => {
   res.json(g);
 });
 
+// 投稿の編集（投稿者か管理者）
+app.patch('/api/spots/:id', needJson, need, limit(60, 3600e3), (req, res) => {
+  const sp = db.spots.find(x => x.id === req.params.id);
+  if (!sp) return res.status(404).json({ error: '見つかりません' });
+  if (sp.authorId !== req.user.id && !req.user.admin) return res.status(403).json({ error: '編集できるのは投稿者か管理者のみです' });
+  const b = req.body || {};
+  const next = {
+    name: clean(b.name, 60), pref: clean(b.pref, 10), city: clean(b.city, 30),
+    genre: clean(b.genre, 20), price: clean(b.price, 12),
+    hours: String(b.hours ?? '').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').trim().slice(0, 400),
+    phone: /^[0-9+\-()\s]{0,30}$/.test(String(b.phone ?? '').trim()) ? String(b.phone ?? '').trim() : '',
+    comment: String(b.comment ?? '').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').trim().slice(0, 400)
+  };
+  if (!next.name || !next.city || !next.comment) return res.status(400).json({ error: '店名・市区町村・おすすめポイントは必須です' });
+  if (!PREFS.includes(next.pref)) return res.status(400).json({ error: '都道府県が不正です' });
+  if (CITIES[next.pref] && !CITIES[next.pref].includes(next.city)) return res.status(400).json({ error: '市区町村は一覧から選んでください（例：札幌市中央区）' });
+  if (!GENRES.includes(next.genre)) next.genre = 'その他';
+  if (!PRICES.includes(next.price)) next.price = '';
+  const areaChanged = next.pref !== sp.pref || next.city !== sp.city, nameChanged = next.name !== sp.name;
+  Object.assign(sp, next);
+  const lat = Number(b.lat), lng = Number(b.lng);
+  let relocate = false;
+  if (b.lat != null && b.lng != null && inJapan(lat, lng)) { sp.lat = +lat.toFixed(6); sp.lng = +lng.toFixed(6); sp.geo = 'user'; sp.v = 2; }
+  else if (areaChanged || (nameChanged && sp.geo !== 'user')) relocate = true;
+  save();
+  res.json(sp);
+  if (relocate) locateSpot(sp).then(g => { if (g) { sp.lat = g.lat; sp.lng = g.lng; sp.geo = g.geo; sp.v = 2; save(); } });
+});
+
 // 位置の修正（投稿者か管理者）
 app.patch('/api/spots/:id/location', needJson, need, limit(60, 3600e3), (req, res) => {
   const sp = db.spots.find(x => x.id === req.params.id);
@@ -498,6 +535,6 @@ app.use((req, res) => res.status(404).send('Not found'));
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`ご当地めし帖 起動: ポート ${PORT} / 公開URL ${PUBLIC_URL}`);
   console.log(`Discord リダイレクトURI: ${REDIRECT_URI}`);
-  console.log('Discord通知: ' + (hookOk ? '有効' : '無効（DISCORD_WEBHOOK_URL 未設定）'));
+  console.log('Discord通知: ' + (botOk ? '有効（BOT経由）' : hookOk ? '有効（Webhook）' : '無効（DISCORD_CHANNEL_ID+DISCORD_BOT_TOKEN か DISCORD_WEBHOOK_URL を設定）'));
   if (!CLIENT_ID || !CLIENT_SECRET) console.warn('警告: DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET が未設定です（ログイン不可）');
 });

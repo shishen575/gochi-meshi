@@ -146,6 +146,7 @@ function renderFeed(){
       ${s.ratingCount?`<div class="rate" title="口コミ平均">${stars(s.ratingAvg)} <b>${s.ratingAvg.toFixed(1)}</b> <span class="place">（口コミ${s.ratingCount}件）</span></div>`:""}
       <div class="links"><a class="btn small" href="${map}" target="_blank" rel="noopener noreferrer">Googleマップで開く</a>
         <a class="btn small" href="${route}" target="_blank" rel="noopener noreferrer">ルート案内</a>
+        ${(uid && s.authorId===uid)||admin?`<button class="btn small" data-edit="${esc(s.id)}" type="button">編集</button>`:""}
         ${(uid && s.authorId===uid)||admin?`<button class="btn small" data-loc="${esc(s.id)}" type="button">${S.locEdit===s.id?"位置の修正をやめる":"ピンの位置を直す"}</button>`:""}
         <button class="btn small" data-rv="${esc(s.id)}" aria-expanded="${isOpen}" type="button">口コミ${s.ratingCount?`（${s.ratingCount}）`:""}を${isOpen?"閉じる":"見る・書く"}</button></div>
       ${S.locEdit===s.id?`<div class="locedit"><p class="msg">地図をクリックして、店の場所にピンを動かしてください。</p><div id="loc-map" class="map mini"></div><div class="actions"><button class="btn primary small" data-locsave="${esc(s.id)}" type="button">この位置で保存</button><span class="msg" id="loc-msg"></span></div></div>`:""}
@@ -253,12 +254,13 @@ function mountLocEditor(){
 }
 function render(){ renderUser(); renderFilters(); renderFeed(); renderMap(); renderExport(); }
 
-function openForm(){
+function openForm(edit){
+  const E = edit || null;
   const prefOpts = `<option value="">選んでください</option>` + Object.entries(REGIONS).map(([r,ps]) =>
-    `<optgroup label="${esc(r)}">${ps.map(p=>`<option ${p===S.pref?"selected":""}>${p}</option>`).join("")}</optgroup>`).join("");
+    `<optgroup label="${esc(r)}">${ps.map(p=>`<option ${p===(E?E.pref:S.pref)?"selected":""}>${p}</option>`).join("")}</optgroup>`).join("");
   $("formSlot").innerHTML = `<form class="form" id="form">
-    <h2 style="font-size:18px">飯を紹介する</h2>
-    <div class="field"><label for="f-gm">Googleマップのリンクから自動入力（任意）</label>
+    <h2 style="font-size:18px">${E?"投稿を編集する":"飯を紹介する"}</h2>
+    <div class="field" ${E?"hidden":""}><label for="f-gm">Googleマップのリンクから自動入力（任意）</label>
       <div class="actions"><input class="input" id="f-gm" type="url" inputmode="url" placeholder="https://maps.app.goo.gl/…" style="flex:1;min-width:220px"><button class="btn" id="f-gmgo" type="button">自動入力</button></div>
       <span class="msg" id="f-gmmsg">Googleマップアプリで店を開き、共有 → リンクをコピー、で貼れます。店名・場所・市区町村が入ります。</span></div>
     <div class="row">
@@ -278,12 +280,14 @@ function openForm(){
       <div class="actions"><button class="btn small" id="f-find" type="button">店名と地域から場所を検索</button><span class="msg" id="f-geomsg"></span></div>
       <div id="f-map" class="map mini"></div></div>
     <div class="field"><label for="f-comment">おすすめポイント（必須）</label><textarea class="input" id="f-comment" required maxlength="400" placeholder="何がうまいか、頼むべき一品、混み具合など"></textarea></div>
-    <div class="actions"><button class="btn primary" type="submit">投稿する</button><button class="btn" id="cancel" type="button">やめる</button><span class="msg" id="fmsg"></span></div>
+    <div class="actions"><button class="btn primary" type="submit">${E?"保存する":"投稿する"}</button><button class="btn" id="cancel" type="button">やめる</button><span class="msg" id="fmsg"></span></div>
   </form>`;
   const fillCities = (keep) => { const p = $("f-pref").value, sel = $("f-city");
     sel.disabled = !p;
     sel.innerHTML = `<option value="">${p ? "市区町村を選んでください" : "先に都道府県を選んでください"}</option>` + cityOptions(S.cities[p] || [], keep || "", (c, all) => all ? c + "（全区）" : c); };
-  $("f-pref").addEventListener("change", () => fillCities()); fillCities();
+  $("f-pref").addEventListener("change", () => fillCities()); fillCities(E ? E.city : "");
+  if (E) { $("f-name").value = E.name; $("f-genre").value = E.genre; $("f-price").value = E.price || ""; $("f-hours").value = E.hours || ""; $("f-phone").value = E.phone || ""; $("f-comment").value = E.comment; }
+  const orig = E && E.lat != null ? { lat:E.lat, lng:E.lng } : null;
   let fmap = null, fpin = null, pos = null;
   const closeForm = () => { if (fmap) { fmap.remove(); fmap = null; } $("formSlot").innerHTML = ""; };
   const setPin = (lat, lng, zoom) => {
@@ -294,6 +298,7 @@ function openForm(){
   if (typeof L !== "undefined") {
     fmap = baseMap("f-map");
     fmap.on("click", ev => setPin(ev.latlng.lat, ev.latlng.lng));
+    if (orig) setPin(orig.lat, orig.lng, 16);
   } else $("f-map").hidden = true;
   $("f-find").onclick = async () => {
     const m = $("f-geomsg"); m.className = "msg";
@@ -346,8 +351,15 @@ function openForm(){
     const pc = $("f-pref").value, cc = $("f-city").value.trim();
     if (S.cities[pc] && !S.cities[pc].includes(cc)) { if (btn) btn.disabled = false; const m=$("fmsg"); m.className="msg err"; m.textContent="市区町村は候補から選んでください（例：札幌市中央区）"; return; }
     const data = { name:$("f-name").value, genre:$("f-genre").value, pref:$("f-pref").value, city:$("f-city").value, price:$("f-price").value, comment:$("f-comment").value, hours:$("f-hours").value, phone:$("f-phone").value };
-    if (pos) { data.lat = pos.lat; data.lng = pos.lng; }
+    if (pos && !(orig && pos.lat === orig.lat && pos.lng === orig.lng)) { data.lat = pos.lat; data.lng = pos.lng; }
     try {
+      if (E) {
+        const upd = await api(`/api/spots/${E.id}`, { method:"PATCH", body:JSON.stringify(data) });
+        const sp = S.spots.find(x => x.id === E.id); if (sp) Object.assign(sp, upd);
+        S._spotsKey = JSON.stringify(S.spots); closeForm(); render(); $("status").textContent = "保存しました。";
+        if (upd.lat == null || (data.lat == null && (data.pref !== E.pref || data.city !== E.city))) [5000, 12000].forEach(ms => setTimeout(refreshSpots, ms));
+        return;
+      }
       const spot = await api("/api/spots", { method:"POST", body:JSON.stringify(data) });
       S.spots.push(spot); S.pref = spot.pref;
       S.region = Object.keys(REGIONS).find(r => REGIONS[r].includes(spot.pref)); S.city=""; S.genre=""; S.q=""; $("q").value="";
@@ -360,6 +372,7 @@ function openForm(){
 
 document.addEventListener("click", async e => {
   const t = e.target.closest("button"); if (!t) return;
+  if (t.dataset.edit) { const sp = S.spots.find(x => x.id === t.dataset.edit); if (sp) { openForm(sp); $("formSlot").scrollIntoView({ block:"start", behavior:"smooth" }); } return; }
   if (t.dataset.loc) { S.locEdit = S.locEdit === t.dataset.loc ? null : t.dataset.loc; return renderFeed(); }
   if (t.dataset.locsave) {
     const m = $("loc-msg"); if (!S.locPos) { m.className = "msg err"; m.textContent = "地図をクリックして位置を決めてください"; return; }

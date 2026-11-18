@@ -120,6 +120,26 @@
       "field_type": "text"
     },
     {
+      "name": "通知先チャンネルID（任意）",
+      "description": "BOT経由で新着を通知するチャンネルのID（Discordの開発者モードでチャンネルを右クリック > IDをコピー）。BOTトークンとセットで設定。",
+      "env_variable": "DISCORD_CHANNEL_ID",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string|max:30",
+      "field_type": "text"
+    },
+    {
+      "name": "通知用BOTトークン（任意）",
+      "description": "新着通知を送るBOTのトークン。Lumi本体とは別のBOT（専用アプリ）の利用を推奨。BOTにチャンネルの「メッセージを送信」「埋め込みリンク」権限が必要。設定時はWebhookより優先。",
+      "env_variable": "DISCORD_BOT_TOKEN",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string|max:200",
+      "field_type": "text"
+    },
+    {
       "name": "Discord Client ID",
       "description": "Discord Developer Portal の OAuth2 > Client ID",
       "env_variable": "DISCORD_CLIENT_ID",

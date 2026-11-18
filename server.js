@@ -367,7 +367,7 @@ async function sendEmbed(embed, routing) {
   } catch (e) { console.warn('Discord通知に失敗:', e.message); }
 }
 const avatarOk = u => /^https:\/\/cdn\.discordapp\.com\//.test(u || '');
-async function notifyDiscord(spot) {
+async function notifyDiscord(spot, kind = 'new') {
   if (!anySink()) return;
   const fields = [{ name: '場所', value: mdEsc(`${spot.pref} ${spot.city}`), inline: true }, { name: 'ジャンル', value: mdEsc(spot.genre), inline: true }];
   if (spot.price) fields.push({ name: '予算', value: mdEsc(spot.price), inline: true });
@@ -376,8 +376,9 @@ async function notifyDiscord(spot) {
   const embed = {
     title: mdEsc(spot.name).slice(0, 250), url: `${PUBLIC_URL}/?s=${spot.id}`, color: 0x1c6b57,
     description: mdEsc(spot.comment).slice(0, 1000), fields,
-    author: { name: `${mdEsc(spot.authorName).slice(0, 60)} さんの新しいおすすめ` }, timestamp: new Date(spot.createdAt).toISOString()
+    author: { name: `${mdEsc(spot.authorName).slice(0, 60)} さんの${kind === 'edit' ? 'おすすめが更新されました' : '新しいおすすめ'}` }, timestamp: new Date(kind === 'edit' ? Date.now() : spot.createdAt).toISOString()
   };
+  if (kind === 'edit') embed.color = 0x2a6fdb;
   if (avatarOk(spot.authorAvatar)) embed.author.icon_url = spot.authorAvatar;
   if (spot.images && spot.images[0] && /^https:\/\//.test(PUBLIC_URL)) embed.image = { url: `${PUBLIC_URL}/img/${spot.images[0]}` };
   await sendEmbed(embed, routeFor(spot));
@@ -537,6 +538,7 @@ app.get('/api/geocode', need, limit(20, 600e3), async (req, res) => {
   res.json(g);
 });
 
+const editNotified = new Map();
 // 投稿の編集（投稿者か管理者）
 app.patch('/api/spots/:id', needJson, need, limit(60, 3600e3), (req, res) => {
   const sp = db.spots.find(x => x.id === req.params.id);
@@ -556,6 +558,8 @@ app.patch('/api/spots/:id', needJson, need, limit(60, 3600e3), (req, res) => {
   if (!GENRES.includes(next.genre)) next.genre = guessGenre({ name: next.name, comment: next.comment }) || 'その他';
   if (!PRICES.includes(next.price)) next.price = '';
   const areaChanged = next.pref !== sp.pref || next.city !== sp.city, nameChanged = next.name !== sp.name;
+  const contentKey = o => JSON.stringify([o.name, o.pref, o.city, o.genre, o.price, o.comment, o.hours, o.phone, (o.images || []).join()]);
+  const before = contentKey(sp);
   Object.assign(sp, next);
   if (Array.isArray(b.images)) {
     const prev = sp.images || [];
@@ -568,6 +572,8 @@ app.patch('/api/spots/:id', needJson, need, limit(60, 3600e3), (req, res) => {
   else if (areaChanged || (nameChanged && sp.geo !== 'user')) relocate = true;
   save();
   res.json(sp);
+  // 内容が変わったら、もう一度通知する（位置だけの修正や、同じ店への連続編集（2分以内）は通知しない）
+  if (contentKey(sp) !== before && Date.now() - (editNotified.get(sp.id) || 0) > 120000) { editNotified.set(sp.id, Date.now()); notifyDiscord(sp, 'edit').catch(() => {}); }
   if (relocate) locateSpot(sp).then(g => { if (g) { sp.lat = g.lat; sp.lng = g.lng; sp.geo = g.geo; sp.v = 2; save(); } });
 });
 

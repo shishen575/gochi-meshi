@@ -101,3 +101,4 @@ details.export ol{margin:6px 0 0;padding-left:1.3em}
 .favrow input{width:18px;height:18px;accent-color:var(--accent)}
 @media(max-width:520px){.favbtn .fl{display:none}}
 .locedit{display:grid;gap:8px;border-top:1px solid var(--line);padding-top:10px}
+.card.focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}

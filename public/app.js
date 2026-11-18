@@ -136,7 +136,7 @@ function renderFeed(){
   const admin = !!(S.me && S.me.user && S.me.user.admin);
   $("feed").innerHTML = rows.map(s => {
     const map = gmapUrl(s), route = routeUrl(s), isOpen = S.open.has(s.id);
-    return `<article class="card">
+    return `<article class="card ${S.focus===s.id?"focus":""}" id="spot-${esc(s.id)}">
       <div class="card-top"><div><h3>${esc(s.name)}</h3><div class="place">${esc(s.pref)} ${esc(s.city)}</div></div>
         <span class="rowbtns"><button class="btn small favbtn" data-fav="${esc(s.id)}" aria-pressed="${!!s.fav}" ${S.me&&S.me.loggedIn?"":"disabled"} title="${S.me&&S.me.loggedIn?"お気に入り":"ログインするとお気に入りに入れられます"}" aria-label="お気に入り">${s.fav?"★":"☆"} <span class="fl">お気に入り</span></button>
         <button class="btn small like" data-like="${esc(s.id)}" aria-pressed="${s.liked}" ${canPost()?"":"disabled"} aria-label="いいね">♥ <span class="c">${s.likes}</span></button></span></div>
@@ -432,5 +432,10 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && S.
     $("status").textContent = "";
     if (me.loggedIn && !me.user.member) $("status").textContent = "このサーバーのメンバーではないため、閲覧のみ可能です。";
   } catch (err) { $("status").textContent = "データを読み込めませんでした。"; }
-  S.loaded = true; render();
+  S.loaded = true;
+  // 通知のリンク（/?s=店ID）から来たら、その店に移動して目立たせる
+  const sid = new URLSearchParams(location.search).get("s"), target = sid && S.spots.find(x => x.id === sid);
+  if (target) { S.pref = target.pref; S.region = Object.keys(REGIONS).find(r => REGIONS[r].includes(target.pref)) || ""; S.focus = target.id; }
+  render();
+  if (target) { const el = $("spot-" + target.id); if (el) el.scrollIntoView({ block:"center" }); }
 })();

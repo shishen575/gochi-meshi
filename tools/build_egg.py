@@ -65,6 +65,8 @@ egg = {
         var("更新確認の間隔（分）", "何分ごとに更新を確認するか。1〜1440。", "UPDATE_INTERVAL", "5", "required|integer|min:1|max:1440"),
         var("Google Maps APIキー（任意）", "設定すると地図がGoogleマップになり、投稿のたびに自動でピンが増えます。Google Cloud で Maps JavaScript API を有効にし、キーのHTTPリファラ制限に公開URLを登録してください。空ならOpenStreetMap。",
             "GOOGLE_MAPS_KEY", "", "nullable|string|max:100"),
+        var("Discord Webhook URL（任意）", "お店が追加されたとき、このWebhookのチャンネルに通知します。Discordのチャンネル設定 > 連携サービス > ウェブフック で作成。空なら通知しません。",
+            "DISCORD_WEBHOOK_URL", "", "nullable|string|max:300"),
         var("Discord Client ID", "Discord Developer Portal の OAuth2 > Client ID",
             "DISCORD_CLIENT_ID", "", "required|string|max:40"),
         var("Discord Client Secret", "Discord Developer Portal の OAuth2 > Client Secret",

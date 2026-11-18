@@ -100,6 +100,16 @@
       "field_type": "text"
     },
     {
+      "name": "Discord Webhook URL（任意）",
+      "description": "お店が追加されたとき、このWebhookのチャンネルに通知します。Discordのチャンネル設定 > 連携サービス > ウェブフック で作成。空なら通知しません。",
+      "env_variable": "DISCORD_WEBHOOK_URL",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string|max:300",
+      "field_type": "text"
+    },
+    {
       "name": "Discord Client ID",
       "description": "Discord Developer Portal の OAuth2 > Client ID",
       "env_variable": "DISCORD_CLIENT_ID",

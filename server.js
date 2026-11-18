@@ -12,6 +12,7 @@ const CLIENT_ID = process.env.DISCORD_CLIENT_ID || '';
 const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
 const GUILD_ID = process.env.DISCORD_GUILD_ID || '';          // 空なら Discord ログインできる人なら誰でも投稿可
 const GOOGLE_MAPS_KEY = (process.env.GOOGLE_MAPS_KEY || '').trim();   // 設定するとGoogleマップで表示（未設定ならOpenStreetMap）
+const WEBHOOK_URL = (process.env.DISCORD_WEBHOOK_URL || '').trim();   // 設定すると、お店が追加されたときにそのチャンネルへ通知
 const ADMIN_IDS = (process.env.ADMIN_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
 const SECURE = PUBLIC_URL.startsWith('https://');
@@ -196,6 +197,29 @@ async function locateIn(pref, city, queries) {
 const locateSpot = sp => locateIn(sp.pref, sp.city, [`${sp.name} ${sp.city}`, sp.name]);
 const spotQueries = s => [`${s.name} ${s.pref}${s.city}`, `${s.pref}${s.city}`];
 
+/* ---------- Discord への新着通知（Webhook） ---------- */
+const hookOk = /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(WEBHOOK_URL) || /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(WEBHOOK_URL);
+if (WEBHOOK_URL && !hookOk) console.warn('警告: DISCORD_WEBHOOK_URL の形式が正しくないため、通知は無効です');
+const mdEsc = t => String(t).replace(/([\\*_~`|>\[\]()#])/g, '\\$1');
+async function notifyDiscord(spot) {
+  if (!hookOk) return;
+  const fields = [{ name: '場所', value: mdEsc(`${spot.pref} ${spot.city}`), inline: true }, { name: 'ジャンル', value: mdEsc(spot.genre), inline: true }];
+  if (spot.price) fields.push({ name: '予算', value: mdEsc(spot.price), inline: true });
+  const gmap = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(`${spot.name} ${spot.pref}${spot.city}`);
+  fields.push({ name: 'Googleマップ', value: `[地図で開く](${gmap})` });
+  const embed = {
+    title: mdEsc(spot.name).slice(0, 250), url: `${PUBLIC_URL}/?s=${spot.id}`, color: 0x1c6b57,
+    description: mdEsc(spot.comment).slice(0, 1000), fields,
+    author: { name: `${mdEsc(spot.authorName).slice(0, 60)} さんの新しいおすすめ` }, timestamp: new Date(spot.createdAt).toISOString()
+  };
+  if (/^https:\/\/cdn\.discordapp\.com\//.test(spot.authorAvatar || '')) embed.author.icon_url = spot.authorAvatar;
+  try {
+    const r = await fetch(WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'ご当地めし帖', embeds: [embed], allowed_mentions: { parse: [] } }), signal: AbortSignal.timeout(8000) });
+    if (!r.ok) console.warn('Discord通知に失敗:', r.status);
+  } catch (e) { console.warn('Discord通知に失敗:', e.message); }
+}
+
 /* ---------- API ---------- */
 const PREFS = ["北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県","茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県","新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県","静岡県","愛知県","三重県","滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県","鳥取県","島根県","岡山県","広島県","山口県","徳島県","香川県","愛媛県","高知県","福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県"];
 const GENRES = ["ラーメン","寿司・海鮮","肉料理","定食・食堂","カレー","うどん・そば","郷土料理","カフェ・スイーツ","居酒屋","その他"];
@@ -261,6 +285,7 @@ app.post('/api/spots', needJson, need, limit(10, 3600e3), (req, res) => {
   const lat = Number(b.lat), lng = Number(b.lng);
   if (b.lat != null && b.lng != null && inJapan(lat, lng)) { spot.lat = +lat.toFixed(6); spot.lng = +lng.toFixed(6); spot.geo = 'user'; }
   db.spots.push(spot); save();
+  notifyDiscord(spot);
   res.status(201).json({ ...spot, likes: 0, liked: false });
   if (spot.lat == null) {
     locateSpot(spot).then(g => { if (g) { spot.lat = g.lat; spot.lng = g.lng; spot.geo = g.geo; spot.v = 2; save(); } });
@@ -431,5 +456,6 @@ app.use((req, res) => res.status(404).send('Not found'));
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`ご当地めし帖 起動: ポート ${PORT} / 公開URL ${PUBLIC_URL}`);
   console.log(`Discord リダイレクトURI: ${REDIRECT_URI}`);
+  console.log('Discord通知: ' + (hookOk ? '有効' : '無効（DISCORD_WEBHOOK_URL 未設定）'));
   if (!CLIENT_ID || !CLIENT_SECRET) console.warn('警告: DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET が未設定です（ログイン不可）');
 });
